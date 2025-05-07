@@ -71,7 +71,7 @@ world/maps/PvPZone**/PvPZone%%.wdt;0123456789
 ```
 
 ### Use an existing listfile and automatic strategies to try to match new names
-This will take a long time to run compared to the other examples on this page. For my computer with 24 CPU threads it typically takes just over 8 minutes. Currently, this simply checks many combinations of existing directories and filenames contained in the listfile in an attempt to find existing files that were copied to somewhere else without changing the filename. Because a listfile was provided, this will exclude any hashes from the file given with `-n` that are already known.
+This will take a long time to run compared to the other examples on this page. For my computer with 24 CPU threads it typically takes around 8 minutes. Currently, this simply checks many combinations of existing directories and filenames contained in the listfile in an attempt to find existing files that were copied to somewhere else without changing the filename. Because a listfile was provided, this will exclude any hashes from the file given with `-n` that are already known.
 ```
 >bruteforcer -n lookup.csv -l listfile-withcapitals.csv
 3169803;shaders/raytracing/dx_6_0/TestShader1_Internal.bls

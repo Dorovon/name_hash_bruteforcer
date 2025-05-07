@@ -1,52 +1,7 @@
 #include "util.h"
 
-#include <format>
 #include <fstream>
 #include <iostream>
-
-char util::to_upper( char c )
-{
-  if ( c >= 'a' && c <= 'z' )
-    return c & 0xdf;
-
-  if ( c == '/' )
-    return '\\';
-
-  return c;
-}
-
-char util::to_lower( char c )
-{
-  if ( c >= 'A' && c <= 'Z' )
-    return c | 0x20;
-
-  if ( c == '\\' )
-    return '/';
-
-  return c;
-}
-
-void util::to_upper( std::string& str )
-{
-  for ( size_t i = 0; i < str.size(); i++ )
-    str[ i ] = to_upper( str[ i ] );
-}
-
-// comparison function for case-insensitive strings
-bool util::str_lt_ci( std::string_view first, std::string_view second )
-{
-  size_t min_size = first.size() < second.size() ? first.size() : second.size();
-
-  for ( size_t i = 0; i < min_size; i++ )
-  {
-    if ( to_lower( first [ i ] ) < to_lower( second [ i ] ) )
-      return true;
-    if ( to_lower( first [ i ] ) > to_lower( second [ i ] ) )
-      return false;
-  }
-
-  return first.size() < second.size();
-}
 
 std::vector<std::string_view> util::string_split( std::string_view str, std::string_view delim )
 {
@@ -91,4 +46,3 @@ std::string util::read_text_file( std::string& path )
   file.read( file_data.data(), size );
   return file_data;
 }
-
