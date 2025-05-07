@@ -1,5 +1,8 @@
+#include "hash_string.h"
+#include "hashlittle2.h"
+#include "util.h"
+
 #include <format>
-#include <fstream>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -16,211 +19,6 @@ static std::string LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- ";
 static size_t LETTERS_SIZE = LETTERS.size();
 static const char* program_name = "bruteforcer";
 
-char to_upper( char c )
-{
-  if ( c >= 'a' && c <= 'z' )
-    return c & 0xdf;
-
-  if ( c == '/' )
-    return '\\';
-
-  return c;
-}
-
-char to_lower( char c )
-{
-  if ( c >= 'A' && c <= 'Z' )
-    return c | 0x20;
-
-  if ( c == '\\' )
-    return '/';
-
-  return c;
-}
-
-void to_upper( std::string& str )
-{
-  for ( size_t i = 0; i < str.size(); i++ )
-    str[ i ] = to_upper( str[ i ] );
-}
-
-// comparison function for case-insensitive strings
-bool str_lt_ci( std::string_view first, std::string_view second )
-{
-  size_t min_size = first.size() < second.size() ? first.size() : second.size();
-
-  for ( size_t i = 0; i < min_size; i++ )
-  {
-    if ( to_lower( first [ i ] ) < to_lower( second [ i ] ) )
-      return true;
-    if ( to_lower( first [ i ] ) > to_lower( second [ i ] ) )
-      return false;
-  }
-
-  return first.size() < second.size();
-}
-
-struct hash_string_t
-{
-  // length of the string
-  size_t size;
-
-  // string data padded to mod 12 for simplified hashing
-  std::shared_ptr<unsigned char[]> _data;
-
-  // state for partially completed hash
-  size_t offset;
-  uint32_t a;
-  uint32_t b;
-  uint32_t c;
-
-  hash_string_t() :
-    size(), _data(), offset(), a(), b(), c()
-  {}
-
-  hash_string_t( std::string_view str ) :
-    size( str.size() ), offset(), a(), b(), c()
-  {
-    size_t data_size = str.size() + 12 - str.size() % 12;
-    _data = std::make_shared<unsigned char[]>( data_size );
-    for ( size_t i = 0; i < str.size(); i++ )
-      _data.get()[ i ] = to_upper( str[ i ] );
-    for ( size_t i = str.size(); i < data_size; i++ )
-      _data.get()[ i ] = 0;
-    initialize();
-  }
-
-  hash_string_t& operator=( std::string_view str )
-  {
-    *this = hash_string_t{ str };
-    return *this;
-  }
-
-  unsigned char& operator[]( const size_t index )
-  {
-    return _data.get()[ index ];
-  }
-
-  const unsigned char& operator[]( const size_t index ) const
-  {
-    return _data.get()[ index ];
-  }
-
-  const char* as_string() const
-  {
-    return reinterpret_cast<const char*>( _data.get() );
-  }
-
-  const unsigned char* data() const
-  {
-    return _data.get();
-  }
-
-  void initialize();
-};
-
-uint32_t rotate_left( uint32_t value, size_t distance )
-{
-  return ( value << distance ) | ( value >> ( 32 - distance ) );
-}
-
-uint64_t hashlittle2( hash_string_t& str, size_t length = 0, bool save_state = false )
-{
-  const unsigned char* k;
-  uint32_t a, b, c;
-  if ( length == 0 )
-    length = str.size;
-  if ( str.offset > 0 )
-  {
-    k = &str[ str.offset ];
-    length -= str.offset;
-    a = str.a;
-    b = str.b;
-    c = str.c;
-  }
-  else
-  {
-    k = str.data();
-    a = b = c = 0xdeadbeef + static_cast<uint32_t>( str.size );
-  }
-
-  while ( length > 12 || ( length == 12 && save_state ) )
-  {
-    a += k[ 0 ] + ( static_cast<uint32_t>( k[ 1 ] ) << 8 ) + ( static_cast<uint32_t>( k[  2 ] ) << 16 ) + ( static_cast<uint32_t>( k[  3 ] ) << 24 );
-    b += k[ 4 ] + ( static_cast<uint32_t>( k[ 5 ] ) << 8 ) + ( static_cast<uint32_t>( k[  6 ] ) << 16 ) + ( static_cast<uint32_t>( k[  7 ] ) << 24 );
-    c += k[ 8 ] + ( static_cast<uint32_t>( k[ 9 ] ) << 8 ) + ( static_cast<uint32_t>( k[ 10 ] ) << 16 ) + ( static_cast<uint32_t>( k[ 11 ] ) << 24 );
-    a -= c; a ^= rotate_left( c,  4 ); c += b;
-    b -= a; b ^= rotate_left( a,  6 ); a += c;
-    c -= b; c ^= rotate_left( b,  8 ); b += a;
-    a -= c; a ^= rotate_left( c, 16 ); c += b;
-    b -= a; b ^= rotate_left( a, 19 ); a += c;
-    c -= b; c ^= rotate_left( b,  4 ); b += a;
-    length -= 12;
-    k += 12;
-  }
-
-  if ( save_state )
-  {
-    str.a = a;
-    str.b = b;
-    str.c = c;
-    return 0;
-  }
-
-  a += k[ 0 ] + ( static_cast<uint32_t>( k[ 1 ] ) << 8 ) + ( static_cast<uint32_t>( k[  2 ] ) << 16 ) + ( static_cast<uint32_t>( k[  3 ] ) << 24 );
-  b += k[ 4 ] + ( static_cast<uint32_t>( k[ 5 ] ) << 8 ) + ( static_cast<uint32_t>( k[  6 ] ) << 16 ) + ( static_cast<uint32_t>( k[  7 ] ) << 24 );
-  c += k[ 8 ] + ( static_cast<uint32_t>( k[ 9 ] ) << 8 ) + ( static_cast<uint32_t>( k[ 10 ] ) << 16 ) + ( static_cast<uint32_t>( k[ 11 ] ) << 24 );
-
-  c ^= b; c -= rotate_left( b, 14 );
-  a ^= c; a -= rotate_left( c, 11 );
-  b ^= a; b -= rotate_left( a, 25 );
-  c ^= b; c -= rotate_left( b, 16 );
-  a ^= c; a -= rotate_left( c,  4 );
-  b ^= a; b -= rotate_left( a, 14 );
-  c ^= b; c -= rotate_left( b, 24 );
-
-  return ( static_cast<uint64_t>( c ) << 32 ) | b;
-}
-
-void hash_string_t::initialize()
-{
-  size_t i;
-  for ( i = 0; i < size - 1; i++ )
-  {
-    if ( ( *this )[ i + 1 ] == '*' || ( *this )[ i + 1 ] == '%' )
-      break;
-  }
-  size_t this_size = i - i % 12;
-  hashlittle2( *this, this_size, true );
-  offset = this_size;
-}
-
-std::vector<std::string_view> string_split( std::string_view str, std::string_view delim )
-{
-  std::vector<std::string_view> splits;
-  size_t start = 0;
-
-  for ( size_t i = 0; i < str.size() - delim.size(); i++ )
-  {
-    if ( str.substr( i, delim.size() ) == delim )
-    {
-      if ( i > start )
-      {
-        splits.emplace_back( str.substr( start, i - start ) );
-      }
-      i += delim.size();
-      start = i;
-    }
-  }
-
-  if ( start < str.size() )
-  {
-    splits.emplace_back( str.substr( start, str.size() - start ) );
-  }
-
-  return splits;
-}
-
 void print_match( std::string_view original_pattern, std::string_view match, uint32_t file_data_id = 0 )
 {
   std::lock_guard<std::mutex> guard( cout_mutex );
@@ -231,7 +29,7 @@ void print_match( std::string_view original_pattern, std::string_view match, uin
     if ( i < original_pattern.size() && original_pattern[ i ] != '*' && original_pattern[ i ] != '%' )
       std::cout << original_pattern[ i ];
     else
-      std::cout << to_lower( match[ i ] );
+      std::cout << util::to_lower( match[ i ] );
   }
   std::cout << std::endl;
 }
@@ -263,51 +61,11 @@ bool next_combination( std::vector<size_t>& counts, size_t increment = 1 )
   return true;
 }
 
-std::string read_text_file( std::string& path )
-{
-  std::ifstream file( path, std::ios::binary );
-  if ( !file.good() )
-  {
-    std::cerr << std::format( "Error opening file: {}", path ) << std::endl;
-    std::exit( 1 );
-  }
-
-  // get file size
-  file.unsetf( std::ios::skipws );
-  file.seekg( 0, std::ios::end );
-  size_t size = file.tellg();
-  file.seekg( 0, std::ios::beg );
-
-  // load the entire file into a single string block
-  std::string file_data;
-  file_data.resize( size );
-  file.read( file_data.data(), size );
-  return file_data;
-}
-
-template<typename T>
-void read_lines( std::string_view file_data, T line_func )
-{
-  size_t line_start = 0;
-  std::string_view line;
-  for ( size_t i = 0; i < file_data.size(); i++ )
-  {
-    if ( file_data[ i ] == '\n' || file_data[ i ] == '\r' )
-    {
-      if ( line_start < i )
-        line_func( file_data.substr( line_start, i - line_start ) );
-      line_start = i + 1;
-    }
-  }
-  if ( line_start < file_data.size() )
-    line_func( file_data.substr( line_start, file_data.size() - line_start ) );
-}
-
 void set_alphabet( std::string_view str )
 {
   LETTERS = str;
   LETTERS_SIZE = LETTERS.size();
-  to_upper( LETTERS );
+  util::to_upper( LETTERS );
 }
 
 std::string usage_message()
@@ -368,7 +126,7 @@ int main( int argc, char** argv )
     if ( !current_arg[ 1 ] || current_arg[ 2 ] != 0 )
       exit_usage( std::format( "Unsupported argument: {}", current_arg ) );
 
-    switch ( to_lower( current_arg[ 1 ] ) )
+    switch ( util::to_lower( current_arg[ 1 ] ) )
     {
       case 'a':
         set_alphabet( get_next_arg() );
@@ -415,10 +173,10 @@ int main( int argc, char** argv )
   std::unordered_map<uint32_t, std::string_view> listfile;
   if ( !listfile_path.empty() )
   {
-    listfile_data = read_text_file( listfile_path );
-    read_lines( listfile_data, [&] ( std::string_view line )
+    listfile_data = util::read_text_file( listfile_path );
+    util::read_lines( listfile_data, [&] ( std::string_view line )
     {
-      auto splits = string_split( line, ";" );
+      auto splits = util::string_split( line, ";" );
       if ( splits.size() >= 2 )
         listfile[ std::stoul( std::string( splits[ 0 ] ) ) ] = splits[ 1 ];
     } );
@@ -427,12 +185,12 @@ int main( int argc, char** argv )
   // read patterns from file if given
   if ( !pattern_path.empty() )
   {
-    std::string pattern_data = read_text_file( pattern_path );
-    read_lines( pattern_data, [&] ( std::string_view line )
+    std::string pattern_data = util::read_text_file( pattern_path );
+    util::read_lines( pattern_data, [&] ( std::string_view line )
     {
       if ( !line.empty() && line[ 0 ] != '#' )
       {
-        auto splits = string_split( line, ";" );
+        auto splits = util::string_split( line, ";" );
         patterns.push_back( std::string( splits[ 0 ] ) );
         if ( splits.size() == 2 )
           alphabets.push_back( std::string( splits[ 1 ] ) );
@@ -450,12 +208,12 @@ int main( int argc, char** argv )
   }
   catch ( std::exception& )
   {
-    std::string name_hash_data = read_text_file( name_hash_str );
-    read_lines( name_hash_data, [&] ( std::string_view line )
+    std::string name_hash_data = util::read_text_file( name_hash_str );
+    util::read_lines( name_hash_data, [&] ( std::string_view line )
     {
       if ( !line.empty() && line[ 0 ] != '#' )
       {
-        auto splits = string_split( line, ";" );
+        auto splits = util::string_split( line, ";" );
         if ( splits.size() >= 2 )
         {
           uint64_t name_hash = std::stoull( std::string( splits[ 1 ] ), nullptr, 16 );
@@ -485,8 +243,8 @@ int main( int argc, char** argv )
     if ( listfile.empty() )
       exit_usage( "either a listfile or pattern must be provided" );
 
-    std::set<std::string_view, decltype( str_lt_ci )*> path_names( str_lt_ci );
-    std::set<std::string_view, decltype( str_lt_ci )*> base_names( str_lt_ci );
+    std::set<std::string_view, decltype( util::str_lt_ci )*> path_names( util::str_lt_ci );
+    std::set<std::string_view, decltype( util::str_lt_ci )*> base_names( util::str_lt_ci );
     for ( auto& [ file_data_id, name ] : listfile )
     {
       // check if preprending the hash with some specific directories finds anything
