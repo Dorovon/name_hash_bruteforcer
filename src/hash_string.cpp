@@ -54,6 +54,6 @@ void hash_string_t::initialize()
       break;
   }
   size_t this_size = i - i % 12;
-  hashlittle2( *this, this_size, true );
+  hashlittle2_precompute( *this, this_size );
   offset = this_size;
 }

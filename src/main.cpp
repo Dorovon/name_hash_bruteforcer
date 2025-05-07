@@ -209,24 +209,21 @@ int main( int argc, char** argv )
     std::string name_hash_data = util::read_text_file( name_hash_str );
     util::read_lines( name_hash_data, [&] ( std::string_view line )
     {
-      if ( !line.empty() && line[ 0 ] != '#' )
+      auto splits = util::string_split( line, ";" );
+      if ( splits.size() >= 2 )
       {
-        auto splits = util::string_split( line, ";" );
-        if ( splits.size() >= 2 )
+        uint64_t name_hash = std::stoull( std::string( splits[ 1 ] ), nullptr, 16 );
+        uint32_t file_data_id = std::stoul( std::string( splits[ 0 ] ) );
+        auto it = listfile.find( file_data_id );
+        bool known = false;
+        if ( it != listfile.end() )
         {
-          uint64_t name_hash = std::stoull( std::string( splits[ 1 ] ), nullptr, 16 );
-          uint32_t file_data_id = std::stoul( std::string( splits[ 0 ] ) );
-          auto it = listfile.find( file_data_id );
-          bool known = false;
-          if ( it != listfile.end() )
-          {
-            hash_string_t filename{ it->second };
-            if ( name_hash == hashlittle2( filename ) )
-              known = true;
-          }
-          if ( !known )
-            name_hashes[ name_hash ] = file_data_id;
+          hash_string_t filename{ it->second };
+          if ( name_hash == hashlittle2( filename ) )
+            known = true;
         }
+        if ( !known )
+          name_hashes[ name_hash ] = file_data_id;
       }
     } );
   }
@@ -245,7 +242,7 @@ int main( int argc, char** argv )
     std::set<std::string_view, decltype( util::str_lt_ci )*> base_names( util::str_lt_ci );
     for ( auto& [ file_data_id, name ] : listfile )
     {
-      // check if preprending the hash with some specific directories finds anything
+      // check if prepending the hash with some specific directories finds anything
       for ( auto prefix : { "Data/", "Alternate/", "Test/" } )
       {
         hash_string_t data_name{ prefix + std::string( name ) };

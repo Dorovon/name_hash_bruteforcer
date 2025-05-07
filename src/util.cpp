@@ -58,18 +58,14 @@ std::vector<std::string_view> util::string_split( std::string_view str, std::str
     if ( str.substr( i, delim.size() ) == delim )
     {
       if ( i > start )
-      {
         splits.emplace_back( str.substr( start, i - start ) );
-      }
       i += delim.size();
       start = i;
     }
   }
 
   if ( start < str.size() )
-  {
     splits.emplace_back( str.substr( start, str.size() - start ) );
-  }
 
   return splits;
 }
