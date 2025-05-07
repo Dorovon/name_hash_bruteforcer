@@ -52,6 +52,7 @@ By default, the alphabet used is 39 characters long `ABCDEFGHIJKLMNOPQRSTUVWXYZ0
 
 ### Checking multiple patterns from a file
 Each line of the file should contain one pattern to evaluate. You can use an optional `;` to specify a different alphabet for each pattern. Any patterns without an alphabet will use the default alphabet given by the `-a` option.
+
 **test_patterns.txt**
 ```
 world/maps/Azeroth/Azeroth.***
@@ -69,7 +70,7 @@ world/maps/PvPZone**/PvPZone%%.wdt;0123456789
 861092;world/maps/PvPZone02/PvPZone02.wdt
 ```
 
-### Use an existing listfile and various strategies to try to match new names
+### Use an existing listfile and automatic strategies to try to match new names
 This will take a long time to run compared to the other examples on this page. For my computer with 24 CPU threads it typically takes just over 8 minutes. Currently, this simply checks many combinations of existing directories and filenames contained in the listfile in an attempt to find existing files that were copied to somewhere else without changing the filename. Because a listfile was provided, this will exclude any hashes from the file given with `-n` that are already known.
 ```
 >bruteforcer -n lookup.csv -l listfile-withcapitals.csv

@@ -12,3 +12,7 @@ install(TARGETS bruteforcer DESTINATION .)
 if (UNIX)
 target_compile_options(bruteforcer PRIVATE -Wall)
 endif()
+
+if(WIN32)
+target_compile_options(bruteforcer PRIVATE /W4)
+endif()

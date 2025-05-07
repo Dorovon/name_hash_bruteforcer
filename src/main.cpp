@@ -14,6 +14,7 @@
 static std::mutex cout_mutex;
 static std::string LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- ";
 static size_t LETTERS_SIZE = LETTERS.size();
+static const char* program_name = "bruteforcer";
 
 char to_upper( char c )
 {
@@ -284,6 +285,24 @@ std::string read_text_file( std::string& path )
   return file_data;
 }
 
+template<typename T>
+void read_lines( std::string_view file_data, T line_func )
+{
+  size_t line_start = 0;
+  std::string_view line;
+  for ( size_t i = 0; i < file_data.size(); i++ )
+  {
+    if ( file_data[ i ] == '\n' || file_data[ i ] == '\r' )
+    {
+      if ( line_start < i )
+        line_func( file_data.substr( line_start, i - line_start ) );
+      line_start = i + 1;
+    }
+  }
+  if ( line_start < file_data.size() )
+    line_func( file_data.substr( line_start, file_data.size() - line_start ) );
+}
+
 void set_alphabet( std::string_view str )
 {
   LETTERS = str;
@@ -291,14 +310,22 @@ void set_alphabet( std::string_view str )
   to_upper( LETTERS );
 }
 
-std::string usage_message( const char* name )
+std::string usage_message()
 {
-  return std::format( "Usage: {} <-n name_hash|name_hash_file> [-a alphabet] [-c cpu_threads] [-l listfile] [-p pattern] [-f pattern_file] [-?]", name );
+  return std::format( "Usage: {} <-n name_hash|name_hash_file> [-a alphabet] [-c cpu_threads] [-l listfile] [-p pattern] [-f pattern_file] [-?]", program_name );
 }
 
-void print_help( const char* name )
+void exit_usage( std::string_view str = "" )
 {
-  std::cout << usage_message( name )
+  if ( !str.empty() )
+    std::cerr << str << std::endl;
+  std::cerr << usage_message() << std::endl;
+  std::exit( 1 );
+}
+
+void print_help()
+{
+  std::cout << usage_message()
             << "\n\nOPTIONS\n"
             << "  -a  use the given alphabet instead of the default\n"
             << "  -c  limit the number of threads used to the given number\n"
@@ -315,15 +342,7 @@ void print_help( const char* name )
 
 int main( int argc, char** argv )
 {
-  auto exit_usage = [ argv ]( std::string_view str = "" )
-  {
-    if ( !str.empty() )
-      std::cerr << str << std::endl;
-    std::cerr << usage_message( argv[ 0 ] ) << std::endl;
-    std::exit( 1 );
-  };
-
-  int arg_index = 1;
+  int arg_index = 0;
   auto get_next_arg = [ & ]()
   {
     if ( arg_index >= argc )
@@ -338,6 +357,7 @@ int main( int argc, char** argv )
   std::vector<std::string> patterns;
   std::vector<std::string> alphabets;
   int NUM_THREADS = std::thread::hardware_concurrency();
+  program_name = get_next_arg();
   const char* current_arg;
   while ( arg_index < argc )
   {
@@ -377,7 +397,7 @@ int main( int argc, char** argv )
         pattern_path = get_next_arg();
         break;
       case '?':
-        print_help( argv[ 0 ] );
+        print_help();
         break;
       default:
         exit_usage( std::format( "Unsupported argument: {}", current_arg ) );
@@ -390,59 +410,39 @@ int main( int argc, char** argv )
   if ( name_hash_str.empty() )
     exit_usage();
 
-  // read the listfile if given
+  // read listfile if given
   std::string listfile_data;
   std::unordered_map<uint32_t, std::string_view> listfile;
   if ( !listfile_path.empty() )
   {
     listfile_data = read_text_file( listfile_path );
-    size_t line_start = 0;
-    std::string_view line;
-    for ( size_t i = 0; i < listfile_data.size(); i++ )
+    read_lines( listfile_data, [&] ( std::string_view line )
     {
-      if ( listfile_data[ i ] == '\n' || listfile_data[ i ] == '\r' )
-      {
-        if ( line_start < i )
-        {
-          line = std::string_view( listfile_data ).substr( line_start, i - line_start );
-          auto splits = string_split( line, ";" );
-          if ( splits.size() >= 2 )
-            listfile[ std::stoul( std::string( splits[ 0 ] ) ) ] = splits[ 1 ];
-        }
-        line_start = i + 1;
-      }
-    }
+      auto splits = string_split( line, ";" );
+      if ( splits.size() >= 2 )
+        listfile[ std::stoul( std::string( splits[ 0 ] ) ) ] = splits[ 1 ];
+    } );
   }
 
-  // read patterns if given
+  // read patterns from file if given
   if ( !pattern_path.empty() )
   {
     std::string pattern_data = read_text_file( pattern_path );
-    size_t line_start = 0;
-    std::string_view line;
-    for ( size_t i = 0; i < pattern_data.size(); i++ )
+    read_lines( pattern_data, [&] ( std::string_view line )
     {
-      if ( pattern_data[ i ] == '\n' || pattern_data[ i ] == '\r' )
+      if ( !line.empty() && line[ 0 ] != '#' )
       {
-        if ( line_start < i )
-        {
-          line = std::string_view( pattern_data ).substr( line_start, i - line_start );
-          if ( !line.empty() && line[ 0 ] != '#' )
-          {
-            auto splits = string_split( line, ";" );
-            patterns.push_back( std::string( splits[ 0 ] ) );
-            if ( splits.size() == 2 )
-              alphabets.push_back( std::string( splits[ 1 ] ) );
-            else
-              alphabets.push_back( LETTERS );
-          }
-        }
-        line_start = i + 1;
+        auto splits = string_split( line, ";" );
+        patterns.push_back( std::string( splits[ 0 ] ) );
+        if ( splits.size() == 2 )
+          alphabets.push_back( std::string( splits[ 1 ] ) );
+        else
+          alphabets.push_back( LETTERS );
       }
-    }
+    } );
   }
 
-  // read the name hashes
+  // read name hashes
   std::unordered_map<uint64_t, uint32_t> name_hashes;
   try
   {
@@ -450,34 +450,29 @@ int main( int argc, char** argv )
   }
   catch ( std::exception& )
   {
-    std::ifstream file( name_hash_str );
-    if ( !file.good() )
+    std::string name_hash_data = read_text_file( name_hash_str );
+    read_lines( name_hash_data, [&] ( std::string_view line )
     {
-      std::cerr << std::format( "Error opening file: {}", name_hash_str ) << std::endl;
-      return 1;
-    }
-
-    std::string line;
-    while ( std::getline( file, line ) )
-    {
-      auto splits = string_split( line, ";" );
-      if ( splits.size() >= 2 )
+      if ( !line.empty() && line[ 0 ] != '#' )
       {
-        uint64_t name_hash = std::stoull( std::string( splits[ 1 ] ), nullptr, 16 );
-        uint32_t file_data_id = std::stoul( std::string( splits[ 0 ] ) );
-        auto it = listfile.find( file_data_id );
-        bool known = false;
-        if ( it != listfile.end() )
+        auto splits = string_split( line, ";" );
+        if ( splits.size() >= 2 )
         {
-          hash_string_t filename{ it->second };
-          if ( name_hash == hashlittle2( filename ) )
-            known = true;
+          uint64_t name_hash = std::stoull( std::string( splits[ 1 ] ), nullptr, 16 );
+          uint32_t file_data_id = std::stoul( std::string( splits[ 0 ] ) );
+          auto it = listfile.find( file_data_id );
+          bool known = false;
+          if ( it != listfile.end() )
+          {
+            hash_string_t filename{ it->second };
+            if ( name_hash == hashlittle2( filename ) )
+              known = true;
+          }
+          if ( !known )
+            name_hashes[ name_hash ] = file_data_id;
         }
-
-        if ( !known )
-          name_hashes[ name_hash ] = file_data_id;
       }
-    }
+    } );
   }
 
   // name hashes are required, so exit if none were provided
