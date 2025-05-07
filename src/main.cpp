@@ -291,13 +291,35 @@ void set_alphabet( std::string_view str )
   to_upper( LETTERS );
 }
 
+std::string usage_message( const char* name )
+{
+  return std::format( "Usage: {} <-n name_hash|name_hash_file> [-a alphabet] [-c cpu_threads] [-l listfile] [-p pattern] [-f pattern_file] [-?]", name );
+}
+
+void print_help( const char* name )
+{
+  std::cout << usage_message( name )
+            << "\n\nOPTIONS\n"
+            << "  -a  use the given alphabet instead of the default\n"
+            << "  -c  limit the number of threads used to the given number\n"
+            << "  -l  use the given listfile for modes that need one\n"
+            << "      this will also filter the given name hash file to ignore names that are already known\n"
+            << "  -n  compare against the given name hash or\n"
+            << "      compare against the name hashes in the given file\n"
+            << "  -p  test the given pattern against all provided name hashes\n"
+            << "  -f  test the patterns in the given file against all provided name hashes\n"
+            << "  -?  display this message and exit\n"
+            << std::endl;
+  std::exit( 0 );
+}
+
 int main( int argc, char** argv )
 {
   auto exit_usage = [ argv ]( std::string_view str = "" )
   {
     if ( !str.empty() )
       std::cerr << str << std::endl;
-    std::cerr << std::format( "usage: {} [-a alphabet] [-c cpu_threads] [-l listfile] <-n name_hash|name_hash_file> [-p pattern] [-f pattern_file]", argv[ 0 ] ) << std::endl;
+    std::cerr << usage_message( argv[ 0 ] ) << std::endl;
     std::exit( 1 );
   };
 
@@ -323,6 +345,9 @@ int main( int argc, char** argv )
     if ( !current_arg || current_arg[ 0 ] != '-' )
       exit_usage();
 
+    if ( !current_arg[ 1 ] || current_arg[ 2 ] != 0 )
+      exit_usage( std::format( "Unsupported argument: {}", current_arg ) );
+
     switch ( to_lower( current_arg[ 1 ] ) )
     {
       case 'a':
@@ -347,15 +372,20 @@ int main( int argc, char** argv )
         break;
       case 'p':
         patterns.push_back( get_next_arg() );
-        alphabets.push_back( LETTERS );
         break;
       case 'f':
         pattern_path = get_next_arg();
+        break;
+      case '?':
+        print_help( argv[ 0 ] );
         break;
       default:
         exit_usage( std::format( "Unsupported argument: {}", current_arg ) );
     }
   }
+
+  while ( alphabets.size() < patterns.size() )
+    alphabets.push_back( LETTERS );
 
   if ( name_hash_str.empty() )
     exit_usage();
@@ -432,7 +462,21 @@ int main( int argc, char** argv )
     {
       auto splits = string_split( line, ";" );
       if ( splits.size() >= 2 )
-        name_hashes[ std::stoull( std::string( splits[ 1 ] ), nullptr, 16 ) ] = std::stoul( std::string( splits[ 0 ] ) );
+      {
+        uint64_t name_hash = std::stoull( std::string( splits[ 1 ] ), nullptr, 16 );
+        uint32_t file_data_id = std::stoul( std::string( splits[ 0 ] ) );
+        auto it = listfile.find( file_data_id );
+        bool known = false;
+        if ( it != listfile.end() )
+        {
+          hash_string_t filename{ it->second };
+          if ( name_hash == hashlittle2( filename ) )
+            known = true;
+        }
+
+        if ( !known )
+          name_hashes[ name_hash ] = file_data_id;
+      }
     }
   }
 
