@@ -25,7 +25,7 @@ std::vector<std::string_view> util::string_split( std::string_view str, std::str
   return splits;
 }
 
-std::string util::read_text_file( std::string& path )
+std::string util::read_text_file( std::string path )
 {
   std::ifstream file( path, std::ios::binary );
   if ( !file.good() )

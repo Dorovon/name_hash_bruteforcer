@@ -8,7 +8,7 @@
 namespace util
 {
 std::vector<std::string_view> string_split( std::string_view str, std::string_view delim );
-std::string read_text_file( std::string& path );
+std::string read_text_file( std::string path );
 
 inline char to_upper( char c )
 {

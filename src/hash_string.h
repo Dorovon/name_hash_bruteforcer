@@ -74,6 +74,12 @@ const unsigned char* hash_string_t::data() const
 
 void hash_string_t::initialize()
 {
+  if ( ( *this )[ 0 ] == '*' || ( *this )[ 0 ] == '%' )
+  {
+    hashlittle2_precompute( *this, 0 );
+    return;
+  }
+
   size_t i;
   for ( i = 0; i < size - 1; i++ )
   {
