@@ -19,7 +19,7 @@ struct hash_string_t
 
   hash_string_t();
   hash_string_t( std::string_view str );
-  void initialize();
+  void compute_partial_hash();
   hash_string_t& operator=( std::string_view str );
   unsigned char& operator[]( const size_t index );
   const unsigned char& operator[]( const size_t index ) const;
@@ -43,7 +43,7 @@ hash_string_t::hash_string_t( std::string_view str ) :
     _data.get()[ i ] = util::to_upper( str[ i ] );
   for ( size_t i = str.size(); i < data_size; i++ )
     _data.get()[ i ] = 0;
-  initialize();
+  compute_partial_hash();
 }
 
 hash_string_t& hash_string_t::operator=( std::string_view str )
@@ -72,7 +72,7 @@ const unsigned char* hash_string_t::data() const
   return _data.get();
 }
 
-void hash_string_t::initialize()
+void hash_string_t::compute_partial_hash()
 {
   if ( ( *this )[ 0 ] == '*' || ( *this )[ 0 ] == '%' )
   {
