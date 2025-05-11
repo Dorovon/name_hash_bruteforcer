@@ -19,6 +19,7 @@ static size_t LETTERS_SIZE = LETTERS.size();
 static const char* PROGRAM_NAME = "bruteforcer";
 static size_t GPU_BATCH_MAX_RESULTS = 1024;
 static size_t GPU_MAX_WORK_SIZE = 2u << 30;
+constexpr size_t NUM_GPU_BUFFERS = 2;
 
 void print_match( std::string_view original_pattern, std::string_view match, uint32_t file_data_id = 0 )
 {
@@ -78,7 +79,7 @@ std::string usage_message()
                       "[-p pattern] "
                       "[-f pattern_file] "
                       "[-g] "
-                      "[-b gpu_batch_size] "
+                      "[-w gpu_batch_work_size] "
                       "[-m gpu_match_buffer] "
                       "[-q] "
                       "[-?]", PROGRAM_NAME );
@@ -97,7 +98,7 @@ void print_help()
                "  -p  test the given pattern against all provided name hashes\n"
                "  -f  test the patterns in the given file against all provided name hashes\n"
                "  -g  use the GPU where supported\n"
-               "  -b  set the batch size for the GPU\n"
+               "  -w  set the batch work size for the GPU\n"
                "  -m  set the maximum number of matches for a single GPU batch\n"
                "  -q  suppress unnecessary output\n"
                "  -?  display this message and exit\n" );
@@ -469,6 +470,7 @@ int main( int argc, char** argv )
         auto match = name_hashes.find( hashlittle2( current_string ) );
         if ( match != name_hashes.end() )
           print_match( original_pattern, current_string.as_string(), match->second );
+        progress_bar.increment( 1 );
         continue;
       }
 
@@ -559,52 +561,40 @@ int main( int argc, char** argv )
           std::exit( 1 );
         }
 
-        cl_mem initial_counts_buffer = clCreateBuffer( context, CL_MEM_READ_ONLY, counts.size() * sizeof( size_t ), NULL, &error );
+        // memory buffers
+        cl_mem initial_counts_buffer[ NUM_GPU_BUFFERS ];
+        cl_mem num_results_buffer[ NUM_GPU_BUFFERS ];
+        cl_mem results_buffer[ NUM_GPU_BUFFERS ];
+        cl_mem hash_buffer;
+
+        for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
+        {
+          initial_counts_buffer[ i ] = clCreateBuffer( context, CL_MEM_READ_ONLY, counts.size() * sizeof( size_t ), NULL, &error );
+          if ( error != CL_SUCCESS )
+          {
+            util::error( "Error while creating buffer: {}", error );
+            std::exit( 1 );
+          }
+
+          num_results_buffer[ i ] = clCreateBuffer( context, CL_MEM_READ_WRITE, sizeof( cl_uint ), NULL, &error );
+          if ( error != CL_SUCCESS )
+          {
+            util::error( "Error while creating buffer: {}", error );
+            std::exit( 1 );
+          }
+
+          results_buffer[ i ] = clCreateBuffer( context, CL_MEM_WRITE_ONLY, GPU_BATCH_MAX_RESULTS * sizeof( size_t ), NULL, &error );
+          if ( error != CL_SUCCESS )
+          {
+            util::error( "Error while creating buffer: {}", error );
+            std::exit( 1 );
+          }
+        }
+
+        hash_buffer = clCreateBuffer( context, CL_MEM_READ_ONLY, bucket_hashes.size() * sizeof( uint64_t ), NULL, &error );
         if ( error != CL_SUCCESS )
         {
           util::error( "Error while creating buffer: {}", error );
-          std::exit( 1 );
-        }
-
-        cl_mem num_results_buffer = clCreateBuffer( context, CL_MEM_READ_WRITE, sizeof( cl_uint ), NULL, &error );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while creating buffer: {}", error );
-          std::exit( 1 );
-        }
-
-        cl_mem results_buffer = clCreateBuffer( context, CL_MEM_WRITE_ONLY, GPU_BATCH_MAX_RESULTS * sizeof( size_t ), NULL, &error );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while creating buffer: {}", error );
-          std::exit( 1 );
-        }
-
-        cl_mem hash_buffer = clCreateBuffer( context, CL_MEM_READ_ONLY, bucket_hashes.size() * sizeof( uint64_t ), NULL, &error );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while creating buffer: {}", error );
-          std::exit( 1 );
-        }
-
-        error = clSetKernelArg( kernel, 0, sizeof( initial_counts_buffer ), ( void* ) &initial_counts_buffer );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while setting kernel argument 0: {}", error );
-          std::exit( 1 );
-        }
-
-        error = clSetKernelArg( kernel, 1, sizeof( num_results_buffer ), ( void* ) &num_results_buffer );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while setting kernel argument 1: {}", error );
-          std::exit( 1 );
-        }
-
-        error = clSetKernelArg( kernel, 2, sizeof( results_buffer ), ( void* ) &results_buffer );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while setting kernel argument 2: {}", error );
           std::exit( 1 );
         }
 
@@ -627,90 +617,144 @@ int main( int argc, char** argv )
           total_work *= LETTERS_SIZE;
         size_t work_done = 0;
         size_t zero = 0;
+        size_t batch_index = 0;
+        cl_event enqueue_events[ NUM_GPU_BUFFERS ];
+        cl_event read_events[ 2 * NUM_GPU_BUFFERS ];
+        std::vector<size_t> batch_counts[ NUM_GPU_BUFFERS ];
+        cl_uint num_results[ NUM_GPU_BUFFERS ];
+        std::vector<size_t> results[ NUM_GPU_BUFFERS ];
+        for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
+        {
+          enqueue_events[ i ] = nullptr;
+          read_events[ 2 * i ] = nullptr;
+          read_events[ 2 * i + 1 ] = nullptr;
+          num_results[ i ] = 0;
+          results[ i ].resize( GPU_BATCH_MAX_RESULTS );
+        }
+
+        auto process_results = [ & ] ( size_t buffer_index )
+        {
+          if ( read_events[ 2 * buffer_index ] && read_events[ 2 * buffer_index + 1 ] )
+          {
+            clWaitForEvents( 2, &read_events[ 2 * buffer_index ] );
+            if ( num_results[ buffer_index ] >= GPU_BATCH_MAX_RESULTS )
+              util::error( "Warning: GPU batch may have exceeded the maximum number of allowed results ({}). Consider using the \"-m\" option to increase this limit.", GPU_BATCH_MAX_RESULTS );
+            for ( size_t i = 0; i < num_results[ buffer_index ]; i++ )
+            {
+              std::vector<size_t> temp_counts = batch_counts[ buffer_index ];
+              if ( next_combination( temp_counts, results[ buffer_index ][ i ] ) )
+              {
+                get_combination( current_string, temp_counts, indices, indices2 );
+                uint64_t hash = hashlittle2( current_string );
+                auto match = name_hashes.find( hash );
+                if ( match != name_hashes.end() )
+                  print_match( original_pattern, current_string.as_string(), match->second );
+                else if ( hash != 0 ) // Names with a hash of 0 are currently not supported because it is used to fill in the buckets
+                  util::error( "Error: GPU result did not match on CPU ({})", results[ buffer_index ][ i ] );
+              }
+              else
+              {
+                util::error( "Error: GPU result is out of range ({})", results[ buffer_index ][ i ] );
+              }
+            }
+            clReleaseEvent( read_events[ 2 * buffer_index ] );
+            clReleaseEvent( read_events[ 2 * buffer_index + 1 ] );
+            read_events[ 2 * buffer_index ] = nullptr;
+            read_events[ 2 * buffer_index + 1 ] = nullptr;
+          }
+        };
+
         do
         {
+          size_t buffer_index = batch_index % NUM_GPU_BUFFERS;
+          process_results( buffer_index );
           size_t work_size = ( work_done + GPU_MAX_WORK_SIZE > total_work ) ? total_work - work_done : GPU_MAX_WORK_SIZE;
           work_done += work_size;
-          error = clEnqueueWriteBuffer( queue, initial_counts_buffer, CL_TRUE, 0, counts.size() * sizeof( size_t ), counts.data(), 0, NULL, NULL );
+          error = clEnqueueWriteBuffer( queue, initial_counts_buffer[ buffer_index ], CL_FALSE, 0, counts.size() * sizeof( size_t ), counts.data(), 0, NULL, NULL );
           if ( error != CL_SUCCESS )
           {
             util::error( "Error while writing to initial_counts_buffer: {}", error );
             std::exit( 1 );
           }
 
-          error = clEnqueueWriteBuffer( queue, num_results_buffer, CL_TRUE, 0, sizeof( cl_uint ), &zero, 0, NULL, NULL );
+          error = clEnqueueWriteBuffer( queue, num_results_buffer[ buffer_index ], CL_FALSE, 0, sizeof( cl_uint ), &zero, 0, NULL, NULL );
           if ( error != CL_SUCCESS )
           {
             util::error( "Error while writing to num_results_buffer: {}", error );
             std::exit( 1 );
           }
 
-          error = clEnqueueNDRangeKernel( queue, kernel, 1, NULL, &work_size, NULL, 0, NULL, NULL );
+          error = clSetKernelArg( kernel, 0, sizeof( initial_counts_buffer[ buffer_index ] ), ( void* ) &initial_counts_buffer[ buffer_index ] );
+          if ( error != CL_SUCCESS )
+          {
+            util::error( "Error while setting kernel argument 0: {}", error );
+            std::exit( 1 );
+          }
+
+          error = clSetKernelArg( kernel, 1, sizeof( num_results_buffer[ buffer_index ] ), ( void* ) &num_results_buffer[ buffer_index ] );
+          if ( error != CL_SUCCESS )
+          {
+            util::error( "Error while setting kernel argument 1: {}", error );
+            std::exit( 1 );
+          }
+
+          error = clSetKernelArg( kernel, 2, sizeof( results_buffer[ buffer_index ] ), ( void* ) &results_buffer[ buffer_index ] );
+          if ( error != CL_SUCCESS )
+          {
+            util::error( "Error while setting kernel argument 2: {}", error );
+            std::exit( 1 );
+          }
+
+          error = clEnqueueNDRangeKernel( queue, kernel, 1, NULL, &work_size, NULL, 0, NULL, &enqueue_events[ buffer_index ] );
           if ( error != CL_SUCCESS )
           {
             util::error( "Error while enqueuing kernel: {}", error );
             std::exit( 1 );
           }
 
-          error = clFinish( queue );
           if ( error != CL_SUCCESS )
           {
             util::error( "Error in OpenCL finish: {}", error );
             std::exit( 1 );
           }
 
-          cl_uint num_results = *( ( cl_uint* ) clEnqueueMapBuffer( queue, num_results_buffer, CL_TRUE, CL_MAP_READ, 0, sizeof( cl_uint ), 0, NULL, NULL, &error ) );
+          error = clEnqueueReadBuffer( queue, num_results_buffer[ buffer_index ], CL_FALSE, 0, sizeof( cl_uint ), &num_results[ buffer_index ], 1, &enqueue_events[ buffer_index ], &read_events[ 2 * buffer_index ] );
           if ( error != CL_SUCCESS )
           {
             util::error( "Error retrieving OpenCL num results: {}", error );
             std::exit( 1 );
           }
 
-          if ( num_results >= GPU_BATCH_MAX_RESULTS )
-            util::error( "Warning: GPU batch may have exceeded the maximum number of allowed results ({}). Consider using the \"-m\" option to increase this limit.", GPU_BATCH_MAX_RESULTS );
-
-          size_t* results = ( size_t* ) clEnqueueMapBuffer( queue, results_buffer, CL_TRUE, CL_MAP_READ, 0, GPU_BATCH_MAX_RESULTS * sizeof( size_t ), 0, NULL, NULL, &error );
+          error = clEnqueueReadBuffer( queue, results_buffer[ buffer_index ], CL_FALSE, 0, GPU_BATCH_MAX_RESULTS * sizeof( size_t ), results[ buffer_index ].data(), 1, &enqueue_events[ buffer_index ], &read_events[ 2 * buffer_index + 1 ] );
           if ( error != CL_SUCCESS )
           {
             util::error( "Error retrieving OpenCL results: {}", error );
             std::exit( 1 );
           }
 
-          error = clEnqueueUnmapMemObject( queue, results_buffer, results, 0, NULL, NULL );
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error unmapping results: {}", error );
-            std::exit( 1 );
-          }
+          clReleaseEvent( enqueue_events[ buffer_index ] );
+          enqueue_events[ buffer_index ] = nullptr;
+          batch_counts[ buffer_index ] = counts;
 
-          for ( size_t i = 0; i < num_results; i++ )
-          {
-            std::vector<size_t> temp_counts = counts;
-            if ( next_combination( temp_counts, results[ i ] ) )
-            {
-              get_combination( current_string, temp_counts, indices, indices2 );
-              auto match = name_hashes.find( hashlittle2( current_string ) );
-              if ( match != name_hashes.end() )
-                print_match( original_pattern, current_string.as_string(), match->second );
-              else
-                util::error( "Error: GPU result did not match on CPU ({})", results[ i ] );
-            }
-            else
-            {
-              util::error( "Error: GPU result is out of range ({})", results[ i ] );
-            }
-          }
+          // TODO: It would be slightly better to store the work sizes and do this after reading the chunk, but it doesn't really matter.
           if ( !quiet )
           {
             progress_bar.increment( work_size );
             progress_bar.out();
           }
+          batch_index++;
         } while ( next_combination( counts, GPU_MAX_WORK_SIZE ) );
+
+        for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
+          process_results( i );
         progress_bar.finish();
 
-        clReleaseMemObject( initial_counts_buffer );
-        clReleaseMemObject( num_results_buffer );
-        clReleaseMemObject( results_buffer );
+        for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
+        {
+          clReleaseMemObject( initial_counts_buffer[ i ] );
+          clReleaseMemObject( num_results_buffer[ i ] );
+          clReleaseMemObject( results_buffer[ i ] );
+        }
         clReleaseMemObject( hash_buffer );
         clReleaseKernel( kernel );
         clReleaseProgram( program );

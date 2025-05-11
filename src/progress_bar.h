@@ -25,10 +25,15 @@ struct progress_bar_t
   ~progress_bar_t()
   {
     std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
-    size_t elapsed = std::chrono::duration_cast<std::chrono::seconds>( now - begin ).count();
+    size_t elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>( now - begin ).count();
+    size_t elapsed_seconds = std::chrono::duration_cast<std::chrono::seconds>( now - begin ).count();
+    if ( elapsed_seconds == 0 )
+      return;
+
     double progress = completed_combinations / total_combinations;
-    auto r = hps( elapsed );
-    util::print( "[{: >6.2f}%] {:02d}:{:02d}:{:02d} elapsed, {:.2f} {}h/s", progress * 100.0, elapsed / 3600, elapsed / 60 % 60, elapsed % 60, r.first, r.second );
+    auto r = hps( elapsed_ms );
+    util::print( "[{: >6.2f}%] {:02d}:{:02d}:{:02d}.{:03d} elapsed, {:.2f} {}h/s", progress * 100.0,
+      elapsed_seconds / 3600, elapsed_seconds / 60 % 60, elapsed_seconds % 60, elapsed_ms % 1000, r.first, r.second );
   }
 
   void finish_thread()
@@ -53,9 +58,12 @@ struct progress_bar_t
     completed_combinations += static_cast<double>( value );
   };
 
-  std::pair<double, std::string> hps( size_t elapsed_seconds ) const
+  std::pair<double, std::string> hps( size_t elapsed_ms ) const
   {
-    double rate = completed_combinations / static_cast<double>( elapsed_seconds );
+    if ( total_combinations == 0 || elapsed_ms == 0 )
+      return { 0.0, "" };
+
+    double rate = completed_combinations / static_cast<double>( elapsed_ms ) * 1000.0;
     std::string prefix = "";
     if ( rate > 1000000000 )
     {
@@ -78,12 +86,13 @@ struct progress_bar_t
   void out()
   {
     std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
-    size_t elapsed = std::chrono::duration_cast<std::chrono::seconds>( now - begin ).count();
-    if ( static_cast<size_t>( elapsed ) < 1 )
+    size_t elapsed_seconds = std::chrono::duration_cast<std::chrono::seconds>( now - begin ).count();
+    size_t elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>( now - begin ).count();
+    if ( elapsed_seconds < 1 )
       return;
     double progress = completed_combinations / total_combinations;
-    size_t eta = static_cast<size_t>( elapsed / progress * ( 1.0 - progress ) );
-    auto r = hps( elapsed );
+    size_t eta = static_cast<size_t>( elapsed_seconds / progress * ( 1.0 - progress ) );
+    auto r = hps( elapsed_ms );
     util::printr( "[{: >6.2f}%], {:02d}:{:02d}:{:02d} remaining, {:.2f} {}h/s", progress * 100.0, eta / 3600, eta / 60 % 60, eta % 60, r.first, r.second );
   }
 };

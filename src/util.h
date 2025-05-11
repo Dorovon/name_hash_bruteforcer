@@ -105,6 +105,7 @@ inline void print( std::string_view s )
   for ( size_t i = s.size(); i < last_printr_size; i++ )
     std::cout << ' ';
   std::cout << std::endl;
+  last_printr_size = 0;
 }
 
 inline void printr( std::string_view s )
@@ -124,11 +125,12 @@ inline void error( std::string_view s )
   if ( has_color )
     std::cerr << "\033[1;31m";
   std::cerr << s;
-  for ( size_t i = s.size(); i < last_printr_size; i++ )
-    std::cerr << ' ';
   if ( has_color )
     std::cerr << "\033[0m";
+  for ( size_t i = s.size(); i < last_printr_size; i++ )
+    std::cerr << ' ';
   std::cerr << std::endl;
+  last_printr_size = 0;
 }
 
 template<class... Args>
@@ -152,9 +154,20 @@ inline void error( std::format_string<Args...> fmt, Args&&... args )
 inline void print_green( std::string_view s )
 {
   if ( stdout_has_color() )
-    util::print( "\033[1;32m{}\033[0m", s );
+  {
+    std::lock_guard<std::mutex> guard( cout_mutex );
+    std::cout << "\033[1;32m";
+    std::cout << s;
+    std::cout << "\033[0m";
+    for ( size_t i = s.size(); i < last_printr_size; i++ )
+      std::cerr << ' ';
+    std::cout << std::endl;
+    last_printr_size = 0;
+  }
   else
-    util::print( s );
+  {
+    print( s );
+  }
 }
 
 template<class... Args>
