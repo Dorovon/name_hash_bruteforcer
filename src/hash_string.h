@@ -8,8 +8,9 @@ struct hash_string_t
   // length of the string
   size_t size;
 
-  // string data padded to mod 12 for simplified hashing
+  // string data padded to mod 12 + 1 for simplified hashing and cstring handling
   std::shared_ptr<unsigned char[]> _data;
+  size_t data_size;
 
   // state for partially completed hash
   size_t offset;
@@ -37,12 +38,15 @@ hash_string_t::hash_string_t() :
 hash_string_t::hash_string_t( std::string_view str ) :
   size( str.size() ), offset(), a(), b(), c()
 {
-  size_t data_size = str.size() + 12 - str.size() % 12;
-  _data = std::make_shared<unsigned char[]>( data_size );
+  data_size = str.size();
+  if ( ( data_size % 12 ) != 0 )
+    data_size += 12 - str.size() % 12;
+  _data = std::make_shared<unsigned char[]>( data_size + 1 );
   for ( size_t i = 0; i < str.size(); i++ )
     _data.get()[ i ] = util::to_upper( str[ i ] );
   for ( size_t i = str.size(); i < data_size; i++ )
     _data.get()[ i ] = 0;
+  _data.get()[ data_size ] = 0; // null byte
   compute_partial_hash();
 }
 

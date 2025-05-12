@@ -444,16 +444,19 @@ int main( int argc, char** argv )
         defines += std::format( "#define NUM_LETTERS {}\n", LETTERS_SIZE );
         defines += std::format( "#define LETTERS \"{}\"\n", LETTERS );
         defines += "#define STR ";
-        for ( size_t i = current_string.offset; i < current_string.size; i++ )
+        for ( size_t i = current_string.offset; i < current_string.data_size; i++ )
         {
           if ( i != current_string.offset )
             defines += ",";
           defines += std::to_string( static_cast<unsigned int>( current_string[ i ] ) );
         }
-        for ( size_t i = 0; i < 12 - current_string.size % 12; i++ )
-          defines += ",0";
         defines += "\n";
-        defines += std::format( "#define LEN {}\n", current_string.size - ( current_string.size % 12 ) - current_string.offset );
+        size_t len = current_string.data_size - current_string.offset;
+        if ( len % 12 != 0 )
+          len -= current_string.data_size % 12;
+        else
+          len -= 12;
+        defines += std::format( "#define LEN {}\n", len );
         defines += std::format( "#define NUM_INDICES {}\n", indices.size() );
         defines += std::format( "#define NUM_INDICES2 {}\n", indices2.size() );
         defines += "#define INDICES ";
