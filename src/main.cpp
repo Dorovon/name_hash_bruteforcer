@@ -18,7 +18,7 @@ static std::string LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- ";
 static size_t LETTERS_SIZE = LETTERS.size();
 static const char* PROGRAM_NAME = "bruteforcer";
 static size_t GPU_BATCH_MAX_RESULTS = 1024;
-static size_t GPU_MAX_WORK_SIZE = 2u << 30;
+static size_t GPU_MAX_WORK_SIZE = 2ull << 30;
 constexpr size_t NUM_GPU_BUFFERS = 2;
 
 void print_match( std::string_view original_pattern, std::string_view match, uint32_t file_data_id = 0 )
