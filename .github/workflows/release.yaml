@@ -26,7 +26,10 @@ jobs:
         sudo apt install -y ocl-icd-opencl-dev opencl-headers
     - name: Install OpenCL (Windows)
       if: runner.os == 'Windows'
-      run: choco install opencl-sdk -y
+      run: |
+        git clone https://github.com/microsoft/vcpkg.git
+        ./vcpkg/bootstrap-vcpkg.bat
+        ./vcpkg/vcpkg install opencl
     - name: Get CMake
       uses: lukka/get-cmake@v3.26.0
     - name: Configure CMake
