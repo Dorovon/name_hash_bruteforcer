@@ -9,9 +9,9 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        target: [linux-x64, win-x64]
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: linux-x64
           - os: windows-latest
             target: win-x64
@@ -54,7 +54,7 @@ jobs:
         type: 'zip'
         directory: 'Release'
         path: 'bruteforcer.exe'
-        filename: Release-${{ matrix.target }}.zip
+        filename: ../Release-${{ matrix.target }}.zip
     - name: Add to Release
       uses: softprops/action-gh-release@v2
       with:
