@@ -28,7 +28,7 @@ jobs:
         sudo apt install -y ocl-icd-opencl-dev opencl-headers
     - name: Install OpenCL (Windows)
       if: runner.os == 'Windows'
-      run: choco install opencl-sdk --version=2022.1.5 -y
+      run: choco install opencl-sdk -y
     - name: Get CMake
       uses: lukka/get-cmake@v3.26.0
     - name: Configure CMake
