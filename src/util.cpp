@@ -30,7 +30,7 @@ std::string util::read_text_file( std::string path )
   std::ifstream file( path, std::ios::binary );
   if ( !file.good() )
   {
-    std::cerr << std::format( "Error opening file: {}", path ) << std::endl;
+    error( "Error opening file: {}", path );
     std::exit( 1 );
   }
 

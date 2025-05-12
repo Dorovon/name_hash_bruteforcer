@@ -26,6 +26,7 @@ void print_match( std::string_view original_pattern, std::string_view match, uin
   std::string s;
   if ( file_data_id > 0 )
     s += std::format( "{};", file_data_id );
+  s.reserve( s.size() + match.size() );
   for ( size_t i = 0; i < match.size(); i++ )
   {
     if ( i < original_pattern.size() && original_pattern[ i ] != '*' && original_pattern[ i ] != '%' )
@@ -138,10 +139,10 @@ int main( int argc, char** argv )
   {
     current_arg = get_next_arg();
     if ( !current_arg || current_arg[ 0 ] != '-' )
-      exit_usage();
+      exit_usage( "Error while parsing options");
 
     if ( !current_arg[ 1 ] || current_arg[ 2 ] != 0 )
-      exit_usage( std::format( "Unsupported argument: {}", current_arg ) );
+      exit_usage( std::format( "Error: Unsupported argument: {}", current_arg ) );
 
     switch ( util::to_lower( current_arg[ 1 ] ) )
     {
@@ -153,9 +154,9 @@ int main( int argc, char** argv )
         std::string thread_count_str = get_next_arg();
         int thread_count = std::stoul( thread_count_str );
         if ( thread_count > NUM_THREADS )
-          exit_usage( std::format( "provided number of threads ({}) was greater than system recommended limit of {}", thread_count, NUM_THREADS ) );
+          exit_usage( std::format( "Error: provided number of threads ({}) was greater than system recommended limit of {}", thread_count, NUM_THREADS ) );
         if ( thread_count <= 0 )
-          exit_usage( std::format( "provided number of threads ({}) must be greater than zero", thread_count ) );
+          exit_usage( std::format( "Error: provided number of threads ({}) must be greater than zero", thread_count ) );
         NUM_THREADS = thread_count;
         break;
       }
@@ -184,7 +185,7 @@ int main( int argc, char** argv )
         std::string batch_size_str = get_next_arg();
         GPU_MAX_WORK_SIZE = std::stoull( batch_size_str );
         if ( GPU_MAX_WORK_SIZE <= 0 )
-          exit_usage( std::format( "GPU batch size ({}) must be greater than zero", GPU_MAX_WORK_SIZE ) );
+          exit_usage( std::format( "Error: GPU batch size ({}) must be greater than zero", GPU_MAX_WORK_SIZE ) );
         break;
       }
       case 'm':
@@ -192,14 +193,14 @@ int main( int argc, char** argv )
         std::string max_results_str = get_next_arg();
         GPU_BATCH_MAX_RESULTS = std::stoull( max_results_str );
         if ( GPU_BATCH_MAX_RESULTS <= 0 )
-          exit_usage( std::format( "GPU max results ({}) must be greater than zero", GPU_BATCH_MAX_RESULTS ) );
+          exit_usage( std::format( "Error: GPU max results ({}) must be greater than zero", GPU_BATCH_MAX_RESULTS ) );
         break;
       }
       case 'q':
         quiet = true;
         break;
       default:
-        exit_usage( std::format( "Unsupported argument: {}", current_arg ) );
+        exit_usage( std::format( "Error: Unsupported argument: {}", current_arg ) );
     }
   }
 
@@ -273,13 +274,13 @@ int main( int argc, char** argv )
 
   // name hashes are required, so exit if none were provided
   if ( name_hashes.empty() )
-    exit_usage( "at least one name hash must be provided" );
+    exit_usage( "Error: at least one name hash must be provided" );
 
   if ( patterns.empty() )
   {
     // Look for matches using names from the listfile
     if ( listfile.empty() )
-      exit_usage( "either a listfile or pattern must be provided" );
+      exit_usage( "Error: either a listfile or pattern must be provided" );
 
     std::set<std::string_view, decltype( util::str_lt_ci )*> path_names( util::str_lt_ci );
     std::set<std::string_view, decltype( util::str_lt_ci )*> base_names( util::str_lt_ci );
@@ -451,12 +452,7 @@ int main( int argc, char** argv )
           defines += std::to_string( static_cast<unsigned int>( current_string[ i ] ) );
         }
         defines += "\n";
-        size_t len = current_string.data_size - current_string.offset;
-        if ( len % 12 != 0 )
-          len -= current_string.data_size % 12;
-        else
-          len -= 12;
-        defines += std::format( "#define LEN {}\n", len );
+        defines += std::format( "#define LEN {}\n", current_string.data_size - current_string.offset - 12 );
         defines += std::format( "#define NUM_INDICES {}\n", indices.size() );
         defines += std::format( "#define NUM_INDICES2 {}\n", indices2.size() );
         defines += "#define INDICES ";
