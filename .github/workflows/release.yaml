@@ -52,7 +52,7 @@ jobs:
       uses: thedoctor0/zip-release@main
       with:
         type: 'zip'
-        path: 'bruteforcer.exe'
+        path: 'Release/bruteforcer.exe'
         filename: Release-${{ matrix.target }}.zip
     - name: Add to Release
       uses: softprops/action-gh-release@v2
