@@ -1,12 +1,11 @@
+#include "gpu_kernel.h"
 #include "hash_string.h"
 #include "hashlittle2.h"
 #include "progress_bar.h"
 #include "util.h"
 
 #include <chrono>
-#include <CL/cl.h>
 #include <format>
-#include <iostream>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -113,40 +112,6 @@ void exit_usage( std::string_view str = "" )
   std::exit( 1 );
 }
 
-cl_device_id find_gpu()
-{
-  cl_int error;
-  cl_platform_id platform_id;
-  cl_uint num_platforms;
-  error = clGetPlatformIDs( 1, &platform_id, &num_platforms );
-  if ( error != CL_SUCCESS )
-  {
-      util::error( "Error: failed to find OpenCL platform: {}", error );
-      std::exit( 1 );
-  }
-  if ( num_platforms == 0 )
-  {
-      util::error( "Error: No OpenCL platforms found" );
-      std::exit( 1 );
-  }
-
-  cl_device_id device_id;
-  cl_uint num_devices;
-  error = clGetDeviceIDs( platform_id, CL_DEVICE_TYPE_GPU, 1, &device_id, &num_devices );
-  if ( error != CL_SUCCESS )
-  {
-      util::error( "Error: failed to find GPU: {}", error );
-      std::exit( 1 );
-  }
-  if ( num_platforms == 0 )
-  {
-      util::error( "Error: No GPUs found" );
-      std::exit( 1 );
-  }
-
-  return device_id;
-}
-
 int main( int argc, char** argv )
 {
   int arg_index = 0;
@@ -166,7 +131,6 @@ int main( int argc, char** argv )
   int NUM_THREADS = std::thread::hardware_concurrency();
   bool use_gpu = false;
   bool quiet = false;
-  cl_device_id gpu_device_id = 0;
   PROGRAM_NAME = get_next_arg();
   const char* current_arg;
   while ( arg_index < argc )
@@ -212,10 +176,9 @@ int main( int argc, char** argv )
       case 'g':
       {
         use_gpu = true;
-        gpu_device_id = find_gpu();
         break;
       }
-      case 'b':
+      case 'w':
       {
         std::string batch_size_str = get_next_arg();
         GPU_MAX_WORK_SIZE = std::stoull( batch_size_str );
@@ -348,6 +311,7 @@ int main( int argc, char** argv )
     progress_bar_t progress_bar( static_cast<double>( num_paths ) * num_base );
     std::vector<std::string_view> base_names_vec{ base_names.begin(), base_names.end() };
     std::vector<std::thread> threads;
+    progress_bar.finished_threads = 0;
     for ( int i = 0; i < NUM_THREADS; i++ )
     {
       threads.emplace_back( [&]( int thread_index )
@@ -520,118 +484,41 @@ int main( int argc, char** argv )
         source.push_back( defines.c_str() );
         source.push_back( kernel_source.c_str() );
 
-        cl_int error;
-        cl_context context = clCreateContext( NULL, 1, &gpu_device_id, NULL, NULL, &error );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while creating OpenCL context: {}", error );
-          std::exit( 1 );
-        }
-
-        cl_command_queue queue = clCreateCommandQueueWithProperties( context, gpu_device_id, 0, &error );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while creating OpenCL command queue: {}", error );
-          std::exit( 1 );
-        }
-
-        cl_program program = clCreateProgramWithSource( context, 2, source.data(), NULL, &error );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while creating OpenCL program from source: {}", error );
-          std::exit( 1 );
-        }
-
-        error = clBuildProgram( program, 1, &gpu_device_id, NULL, NULL, NULL );
-        if ( error != CL_SUCCESS )
-        {
-            size_t log_size;
-            clGetProgramBuildInfo( program, gpu_device_id, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size );
-            std::string log( log_size, '\0' );
-            clGetProgramBuildInfo( program, gpu_device_id, CL_PROGRAM_BUILD_LOG, log_size, log.data(), NULL );
-            util::error( "OpenCL kernel build failed:" );
-            util::print( log );
-            std::exit( 1 );
-        }
-
-        cl_kernel kernel = clCreateKernel( program, "bruteforce", &error );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while creating kernel: {}", error );
-          std::exit( 1 );
-        }
-
-        // memory buffers
-        cl_mem initial_counts_buffer[ NUM_GPU_BUFFERS ];
-        cl_mem num_results_buffer[ NUM_GPU_BUFFERS ];
-        cl_mem results_buffer[ NUM_GPU_BUFFERS ];
-        cl_mem hash_buffer;
-
-        for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
-        {
-          initial_counts_buffer[ i ] = clCreateBuffer( context, CL_MEM_READ_ONLY, counts.size() * sizeof( size_t ), NULL, &error );
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error while creating buffer: {}", error );
-            std::exit( 1 );
-          }
-
-          num_results_buffer[ i ] = clCreateBuffer( context, CL_MEM_READ_WRITE, sizeof( cl_uint ), NULL, &error );
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error while creating buffer: {}", error );
-            std::exit( 1 );
-          }
-
-          results_buffer[ i ] = clCreateBuffer( context, CL_MEM_WRITE_ONLY, GPU_BATCH_MAX_RESULTS * sizeof( size_t ), NULL, &error );
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error while creating buffer: {}", error );
-            std::exit( 1 );
-          }
-        }
-
-        hash_buffer = clCreateBuffer( context, CL_MEM_READ_ONLY, bucket_hashes.size() * sizeof( uint64_t ), NULL, &error );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while creating buffer: {}", error );
-          std::exit( 1 );
-        }
-
-        error = clSetKernelArg( kernel, 3, sizeof( hash_buffer ), ( void* ) &hash_buffer );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while setting kernel argument 3: {}", error );
-          std::exit( 1 );
-        }
-
-        error = clEnqueueWriteBuffer( queue, hash_buffer, CL_TRUE, 0, bucket_hashes.size() * sizeof( uint64_t ), bucket_hashes.data(), 0, NULL, NULL );
-        if ( error != CL_SUCCESS )
-        {
-          util::error( "Error while writing to hash_buffer: {}", error );
-          std::exit( 1 );
-        }
-
         size_t total_work = 1;
         for ( size_t i = 0; i < indices.size(); i++ )
           total_work *= LETTERS_SIZE;
-        size_t work_done = 0;
-        size_t zero = 0;
+        gpu_kernel_t gpu{ source, "bruteforce", total_work, GPU_MAX_WORK_SIZE };
+
+        // device memory buffers
+        cl_mem hash_buffer;
+        cl_mem initial_counts_buffer[ NUM_GPU_BUFFERS ];
+        cl_mem num_results_buffer[ NUM_GPU_BUFFERS ];
+        cl_mem results_buffer[ NUM_GPU_BUFFERS ];
+        hash_buffer = gpu.add_buffer( bucket_hashes.size() * sizeof( uint64_t ) );
+        gpu.write_buffer( hash_buffer, bucket_hashes.data(), bucket_hashes.size() * sizeof( uint64_t ) );
+        gpu.set_arg( 3, hash_buffer );
+        for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
+        {
+          initial_counts_buffer[ i ] = gpu.add_buffer( counts.size() * sizeof( size_t ) );
+          num_results_buffer[ i ] = gpu.add_buffer( sizeof( cl_uint ) );
+          results_buffer[ i ] = gpu.add_buffer( GPU_BATCH_MAX_RESULTS * sizeof( size_t ) );
+        }
+
+        // host buffers and events
         size_t batch_index = 0;
-        cl_event enqueue_events[ NUM_GPU_BUFFERS ];
         cl_event read_events[ 2 * NUM_GPU_BUFFERS ];
         std::vector<size_t> batch_counts[ NUM_GPU_BUFFERS ];
         cl_uint num_results[ NUM_GPU_BUFFERS ];
         std::vector<size_t> results[ NUM_GPU_BUFFERS ];
         for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
         {
-          enqueue_events[ i ] = nullptr;
           read_events[ 2 * i ] = nullptr;
           read_events[ 2 * i + 1 ] = nullptr;
           num_results[ i ] = 0;
           results[ i ].resize( GPU_BATCH_MAX_RESULTS );
         }
 
+        // check any positive results from the GPU
         auto process_results = [ & ] ( size_t buffer_index )
         {
           if ( read_events[ 2 * buffer_index ] && read_events[ 2 * buffer_index + 1 ] )
@@ -649,7 +536,7 @@ int main( int argc, char** argv )
                 auto match = name_hashes.find( hash );
                 if ( match != name_hashes.end() )
                   print_match( original_pattern, current_string.as_string(), match->second );
-                else if ( hash != 0 ) // Names with a hash of 0 are currently not supported because it is used to fill in the buckets
+                else if ( hash != 0 ) // zeros are used to fill in the buckets, so this isn't a false positive worth warning about
                   util::error( "Error: GPU result did not match on CPU ({})", results[ buffer_index ][ i ] );
               }
               else
@@ -664,107 +551,37 @@ int main( int argc, char** argv )
           }
         };
 
+        // check all combinations on the GPU
         do
         {
+          constexpr cl_uint zero = 0;
           size_t buffer_index = batch_index % NUM_GPU_BUFFERS;
           process_results( buffer_index );
-          size_t work_size = ( work_done + GPU_MAX_WORK_SIZE > total_work ) ? total_work - work_done : GPU_MAX_WORK_SIZE;
-          work_done += work_size;
-          error = clEnqueueWriteBuffer( queue, initial_counts_buffer[ buffer_index ], CL_FALSE, 0, counts.size() * sizeof( size_t ), counts.data(), 0, NULL, NULL );
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error while writing to initial_counts_buffer: {}", error );
-            std::exit( 1 );
-          }
-
-          error = clEnqueueWriteBuffer( queue, num_results_buffer[ buffer_index ], CL_FALSE, 0, sizeof( cl_uint ), &zero, 0, NULL, NULL );
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error while writing to num_results_buffer: {}", error );
-            std::exit( 1 );
-          }
-
-          error = clSetKernelArg( kernel, 0, sizeof( initial_counts_buffer[ buffer_index ] ), ( void* ) &initial_counts_buffer[ buffer_index ] );
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error while setting kernel argument 0: {}", error );
-            std::exit( 1 );
-          }
-
-          error = clSetKernelArg( kernel, 1, sizeof( num_results_buffer[ buffer_index ] ), ( void* ) &num_results_buffer[ buffer_index ] );
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error while setting kernel argument 1: {}", error );
-            std::exit( 1 );
-          }
-
-          error = clSetKernelArg( kernel, 2, sizeof( results_buffer[ buffer_index ] ), ( void* ) &results_buffer[ buffer_index ] );
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error while setting kernel argument 2: {}", error );
-            std::exit( 1 );
-          }
-
-          error = clEnqueueNDRangeKernel( queue, kernel, 1, NULL, &work_size, NULL, 0, NULL, &enqueue_events[ buffer_index ] );
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error while enqueuing kernel: {}", error );
-            std::exit( 1 );
-          }
-
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error in OpenCL finish: {}", error );
-            std::exit( 1 );
-          }
-
-          error = clEnqueueReadBuffer( queue, num_results_buffer[ buffer_index ], CL_FALSE, 0, sizeof( cl_uint ), &num_results[ buffer_index ], 1, &enqueue_events[ buffer_index ], &read_events[ 2 * buffer_index ] );
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error retrieving OpenCL num results: {}", error );
-            std::exit( 1 );
-          }
-
-          error = clEnqueueReadBuffer( queue, results_buffer[ buffer_index ], CL_FALSE, 0, GPU_BATCH_MAX_RESULTS * sizeof( size_t ), results[ buffer_index ].data(), 1, &enqueue_events[ buffer_index ], &read_events[ 2 * buffer_index + 1 ] );
-          if ( error != CL_SUCCESS )
-          {
-            util::error( "Error retrieving OpenCL results: {}", error );
-            std::exit( 1 );
-          }
-
-          clReleaseEvent( enqueue_events[ buffer_index ] );
-          enqueue_events[ buffer_index ] = nullptr;
+          gpu.write_buffer( initial_counts_buffer[ buffer_index ], counts.data(), counts.size() * sizeof( size_t ) );
+          gpu.write_buffer( num_results_buffer[ buffer_index ], &zero, sizeof( cl_uint ) );
+          gpu.set_arg( 0, initial_counts_buffer[ buffer_index ] );
+          gpu.set_arg( 1, num_results_buffer[ buffer_index ] );
+          gpu.set_arg( 2, results_buffer[ buffer_index ] );
+          size_t this_work_size = gpu.execute();
+          read_events[ 2 * buffer_index ] = gpu.read_buffer( num_results_buffer[ buffer_index ], &num_results[ buffer_index ], sizeof( cl_uint ) );
+          read_events[ 2 * buffer_index + 1 ] = gpu.read_buffer( results_buffer[ buffer_index ], results[ buffer_index ].data(), GPU_BATCH_MAX_RESULTS * sizeof( size_t ) );
           batch_counts[ buffer_index ] = counts;
-
-          // TODO: It would be slightly better to store the work sizes and do this after reading the chunk, but it doesn't really matter.
+          batch_index++;
           if ( !quiet )
           {
-            progress_bar.increment( work_size );
+            progress_bar.increment( this_work_size );
             progress_bar.out();
           }
-          batch_index++;
         } while ( next_combination( counts, GPU_MAX_WORK_SIZE ) );
 
         for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
           process_results( i );
-        progress_bar.finish();
-
-        for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
-        {
-          clReleaseMemObject( initial_counts_buffer[ i ] );
-          clReleaseMemObject( num_results_buffer[ i ] );
-          clReleaseMemObject( results_buffer[ i ] );
-        }
-        clReleaseMemObject( hash_buffer );
-        clReleaseKernel( kernel );
-        clReleaseProgram( program );
-        clReleaseCommandQueue( queue );
-        clReleaseContext( context );
       }
       else
       {
         // check pattern using CPU
         std::vector<std::thread> threads;
+        progress_bar.finished_threads = 0;
         for ( int i = 0; i < NUM_THREADS; i++ )
         {
           threads.emplace_back( [&]( int thread_index )
@@ -812,9 +629,9 @@ int main( int argc, char** argv )
         }
         for ( auto& thread : threads )
           thread.join();
-        progress_bar.finish();
       }
     }
+    progress_bar.finish();
   }
 
   return 0;
