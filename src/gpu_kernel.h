@@ -1,6 +1,10 @@
 #pragma once
 
+#ifdef _APPLE_
+#include <OpenCL/opencl.h>
+#else
 #include <CL/cl.h>
+#endif
 #include <vector>
 
 struct gpu_kernel_t
