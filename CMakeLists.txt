@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.1...3.28)
 
+# embed kernels
+file(READ "src/cl/hashlittle2.cl" KERNEL_HASHLITTLE2)
+configure_file("src/cl/kernels.h" "src/kernels.h" @ONLY)
+
 project(bruteforcer VERSION 1.0 LANGUAGES CXX)
 set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_CXX_STANDARD 20)
@@ -18,5 +22,5 @@ target_compile_options(bruteforcer PRIVATE -Wall)
 endif()
 
 if (WIN32)
-target_compile_options(bruteforcer PRIVATE /W4)
+target_compile_options(bruteforcer PRIVATE /W4 /EHsc)
 endif()

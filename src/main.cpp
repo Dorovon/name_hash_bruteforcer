@@ -1,6 +1,7 @@
 #include "gpu_kernel.h"
 #include "hash_string.h"
 #include "hashlittle2.h"
+#include "kernels.h"
 #include "progress_bar.h"
 #include "util.h"
 
@@ -365,13 +366,11 @@ int main( int argc, char** argv )
   else
   {
     // look for matches using the provided pattern(s)
-    std::string kernel_source;
     constexpr uint64_t bucket_mask = 0xffff;
     size_t bucket_size = 0;
     std::vector<uint64_t> bucket_hashes;
     if ( use_gpu )
     {
-      kernel_source = util::read_text_file( "src/cl/hashlittle2.cl" );
       size_t bucket_counts[ bucket_mask + 1 ];
       for ( size_t i = 0; i < bucket_mask + 1; i++ )
         bucket_counts[ i ] = 0;
@@ -482,7 +481,7 @@ int main( int argc, char** argv )
         defines += std::format( "#define MAX_RESULTS {}\n", GPU_BATCH_MAX_RESULTS );
         std::vector<const char*> source;
         source.push_back( defines.c_str() );
-        source.push_back( kernel_source.c_str() );
+        source.push_back( kernels::hashlittle2 );
 
         size_t total_work = 1;
         for ( size_t i = 0; i < indices.size(); i++ )
