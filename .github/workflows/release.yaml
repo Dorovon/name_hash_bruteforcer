@@ -19,6 +19,14 @@ jobs:
     steps:
     - name: Checkout Source
       uses: actions/checkout@v3
+    - name: Install GCC 13 (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+        sudo apt update
+        sudo apt install -y gcc-13 g++-13
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100 \
+                                 --slave /usr/bin/g++ g++ /usr/bin/g++-13
     - name: Install OpenCL (Linux)
       if: runner.os == 'Linux'
       run: |
