@@ -27,7 +27,7 @@ struct progress_bar_t
     std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
     size_t elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>( now - begin ).count();
     size_t elapsed_seconds = std::chrono::duration_cast<std::chrono::seconds>( now - begin ).count();
-    if ( elapsed_seconds == 0 )
+    if ( elapsed_ms == 0 )
       return;
 
     double progress = completed_combinations / total_combinations;

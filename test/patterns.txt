@@ -1,0 +1,2 @@
+world/maps/Azeroth/Azeroth.***
+world/maps/PvPZone**/PvPZone%%.wdt;0123456789
