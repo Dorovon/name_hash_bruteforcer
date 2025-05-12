@@ -313,7 +313,7 @@ int main( int argc, char** argv )
     progress_bar_t progress_bar( static_cast<double>( num_paths ) * num_base );
     std::vector<std::string_view> base_names_vec{ base_names.begin(), base_names.end() };
     std::vector<std::thread> threads;
-    progress_bar.finished_threads = 0;
+    progress_bar.reset_threads();
     for ( int i = 0; i < NUM_THREADS; i++ )
     {
       threads.emplace_back( [&]( int thread_index )
@@ -353,7 +353,7 @@ int main( int argc, char** argv )
       threads.emplace_back( [&] ( int )
       {
         using namespace std::chrono_literals;
-        while ( progress_bar.finished_threads < NUM_THREADS )
+        while ( !progress_bar.is_finished( NUM_THREADS ) )
         {
           progress_bar.out();
           std::this_thread::sleep_for( 100ms );
@@ -579,7 +579,7 @@ int main( int argc, char** argv )
       {
         // check pattern using CPU
         std::vector<std::thread> threads;
-        progress_bar.finished_threads = 0;
+        progress_bar.reset_threads();
         for ( int i = 0; i < NUM_THREADS; i++ )
         {
           threads.emplace_back( [&]( int thread_index )
@@ -618,7 +618,7 @@ int main( int argc, char** argv )
           threads.emplace_back( [&] ( int )
           {
             using namespace std::chrono_literals;
-            while ( progress_bar.finished_threads < NUM_THREADS )
+            while ( !progress_bar.is_finished( NUM_THREADS ) )
             {
               progress_bar.out();
               std::this_thread::sleep_for( 100ms );

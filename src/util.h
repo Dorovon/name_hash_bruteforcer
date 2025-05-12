@@ -68,7 +68,6 @@ template<typename T>
 void read_lines( std::string_view file_data, T line_func )
 {
   size_t line_start = 0;
-  std::string_view line;
   for ( size_t i = 0; i < file_data.size(); i++ )
   {
     if ( file_data[ i ] == '\n' || file_data[ i ] == '\r' )
