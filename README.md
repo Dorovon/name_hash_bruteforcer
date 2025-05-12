@@ -38,6 +38,7 @@ world/maps/2875/2875.wdt
 
 ### Changing the alphabet
 By default, the alphabet used is 39 characters long `ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- `. Sometimes, you will want to use a shorter alphabet to speed up results. In this example, there are 8 `*`s and the alphabet contains 10 characters, resulting in `10^8` possible names. This is a very small fraction of the `39^8` names that would need to be checked using the default alphabet.
+
 **test/lookup2.csv**
 ```
 6851560;eb1470de6bc3aa72
