@@ -36,8 +36,6 @@ jobs:
       run: cmake .
     - name: Build
       run: cmake --build . --config Release
-    - name: Install
-      run: cmake --install .
     - name: Add to Release
       uses: softprops/action-gh-release@v2
       with:
