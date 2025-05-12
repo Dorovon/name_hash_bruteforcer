@@ -12,9 +12,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         include:
           - os: ubuntu-latest
-            target: linux-x64
           - os: windows-latest
-            target: win-x64
     runs-on: ${{ matrix.os }}
     steps:
     - name: Checkout Source
@@ -34,17 +32,21 @@ jobs:
       uses: lukka/get-cmake@v3.26.0
     - name: Configure CMake (Windows)
       if: runner.os == 'Windows'
-      run: cmake -S . -B . -DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake
+      run: cmake -S . -B . -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
     - name: Configure CMake (Linux)
       if: runner.os == 'Linux'
       run: cmake -S . -B .
     - name: Build
       run: cmake --build . --config Release
-    - name: LS
+    - name: Add to Release (Linux)
       if: runner.os == 'Linux'
-      run: ls
-    - name: Add to Release
       uses: softprops/action-gh-release@v2
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        files: ${{ matrix.target }}
+        files: bruteforcer
+    - name: Add to Release (Windows)
+      if: runner.os == 'Windows'
+      uses: softprops/action-gh-release@v2
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        files: bruteforcer.exe
