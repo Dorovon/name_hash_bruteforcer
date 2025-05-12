@@ -8,6 +8,8 @@
 #include <iostream>
 #ifdef _WIN32
 #include <Windows.h>
+#else
+#include <unistd.h>
 #endif
 
 static size_t last_printr_size = 0;
@@ -90,12 +92,16 @@ inline bool stdout_has_color()
     return false;
   GetConsoleMode( stdout_handle, &stdout_flags );
   if ( ( stdout_flags & ENABLE_VIRTUAL_TERMINAL_PROCESSING ) == 0 )
+    // if color is not enabled, try to enable it since most windows terminals will have it off by default
     SetConsoleMode( stdout_handle, stdout_flags | ENABLE_VIRTUAL_TERMINAL_PROCESSING );
   GetConsoleMode( stdout_handle, &stdout_flags );
   if ( ( stdout_flags & ENABLE_VIRTUAL_TERMINAL_PROCESSING ) == 0 )
     return false;
-#endif
   return true;
+#else
+  // for now, assume that any terminal supports color
+  return isatty( STDOUT_FILENO );
+#endif
 }
 
 inline void print( std::string_view s )
