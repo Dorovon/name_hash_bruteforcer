@@ -29,10 +29,14 @@ jobs:
       run: |
         git clone https://github.com/microsoft/vcpkg.git
         ./vcpkg/bootstrap-vcpkg.bat
-        ./vcpkg/vcpkg install opencl
+        ./vcpkg/vcpkg --triplet=x64-windows install opencl
     - name: Get CMake
       uses: lukka/get-cmake@v3.26.0
-    - name: Configure CMake
+    - name: Configure CMake (Windows)
+      if: runn.os == 'Windows'
+      run: cmake . -DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake
+    - name: Configure CMake (Linux)
+      if: run.os == 'Linux'
       run: cmake .
     - name: Build
       run: cmake --build . --config Release
@@ -40,4 +44,4 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        files: ${{ github.workspace }}/${{ matrix.target }}
+        files: ${{ matrix.target }}
