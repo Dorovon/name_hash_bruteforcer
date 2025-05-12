@@ -39,4 +39,6 @@ jobs:
     - name: Add to Release
       uses: softprops/action-gh-release@v2
       with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        upload_url: ${{ github.event.release.upload_url }}
         files: ${{ github.workspace }}/Release-${{ matrix.target }}.zip
