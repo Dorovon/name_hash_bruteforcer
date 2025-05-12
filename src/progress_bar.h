@@ -55,7 +55,7 @@ struct progress_bar_t
 
   inline void increment( size_t value )
   {
-    completed_combinations += static_cast<double>( value );
+    completed_combinations.fetch_add( static_cast<double>( value ) );
   };
 
   std::pair<double, std::string> hps( size_t elapsed_ms ) const
