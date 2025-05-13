@@ -142,6 +142,77 @@ const char* cl_error_string( cl_int error )
     case CL_MAX_SIZE_RESTRICTION_EXCEEDED:
       return "CL_MAX_SIZE_RESTRICTION_EXCEEDED";
 #endif
+    // error codes from varaious other headers may not be defined here
+    case -1000:
+      return "CL_INVALID_GL_SHAREGROUP_REFERENCE_KHR";
+    case -1001:
+      return "CL_PLATFORM_NOT_FOUND_KHR";
+    case -1002:
+      return "CL_INVALID_D3D10_DEVICE_KHR";
+    case -1003:
+      return "CL_INVALID_D3D10_RESOURCE_KHR";
+    case -1004:
+      return "CL_D3D10_RESOURCE_ALREADY_ACQUIRED_KHR";
+    case -1005:
+      return "CL_D3D10_RESOURCE_NOT_ACQUIRED_KHR";
+    case -1006:
+      return "CL_INVALID_D3D11_DEVICE_KHR";
+    case -1007:
+      return "CL_INVALID_D3D11_RESOURCE_KHR";
+    case -1008:
+      return "CL_D3D11_RESOURCE_ALREADY_ACQUIRED_KHR";
+    case -1009:
+      return "CL_D3D11_RESOURCE_NOT_ACQUIRED_KHR";
+    case -1010:
+      return "CL_INVALID_DX9_MEDIA_ADAPTER_KHR or CL_INVALID_DX9_DEVICE_INTEL";
+    case -1011:
+      return "CL_INVALID_DX9_MEDIA_SURFACE_KHR or CL_INVALID_DX9_RESOURCE_INTEL";
+    case -1012:
+      return "CL_DX9_MEDIA_SURFACE_ALREADY_ACQUIRED_KHR or CL_DX9_RESOURCE_ALREADY_ACQUIRED_INTEL";
+    case -1013:
+      return "CL_DX9_MEDIA_SURFACE_NOT_ACQUIRED_KHR or CL_DX9_RESOURCE_NOT_ACQUIRED_INTEL";
+    case -1121:
+      return "CL_CONTEXT_TERMINATED_KHR";
+    case -1138:
+      return "CL_INVALID_COMMAND_BUFFER_KHR";
+    case -1139:
+      return "CL_INVALID_SYNC_POINT_WAIT_LIST_KHR";
+    case -1140:
+      return "CL_INCOMPATIBLE_COMMAND_QUEUE_KHR";
+    case -1141:
+      return "CL_INVALID_MUTABLE_COMMAND_KHR";
+    case -1142:
+      return "CL_INVALID_SEMAPHORE_KHR";
+    case -1057:
+      return "CL_DEVICE_PARTITION_FAILED_EXT";
+    case -1058:
+      return "CL_INVALID_PARTITION_COUNT_EXT";
+    case -1059:
+      return "CL_INVALID_PARTITION_NAME_EXT";
+    case -1094:
+      return "CL_INVALID_ACCELERATOR_INTEL";
+    case -1095:
+      return "CL_INVALID_ACCELERATOR_TYPE_INTEL";
+    case -1096:
+      return "CL_INVALID_ACCELERATOR_DESCRIPTOR_INTEL";
+    case -1097:
+      return "CL_ACCELERATOR_TYPE_NOT_SUPPORTED_INTEL";
+    case -1098:
+      return "CL_INVALID_VA_API_MEDIA_ADAPTER_INTEL";
+    case -1099:
+      return "CL_INVALID_VA_API_MEDIA_SURFACE_INTEL";
+    case -1100:
+      return "CL_VA_API_MEDIA_SURFACE_ALREADY_ACQUIRED_INTEL";
+    case -1101:
+      return "CL_VA_API_MEDIA_SURFACE_NOT_ACQUIRED_INTEL";
+    case -1108:
+      return "CL_COMMAND_TERMINATED_ITSELF_WITH_FAILURE_ARM";
+    case -1126:
+      return "CL_CANCELLED_IMG";
+    case 0x40D4:
+      return "CL_GRALLOC_RESOURCE_NOT_ACQUIRED_IMG";
+    case 0x40D5:
+      return "CL_INVALID_GRALLOC_OBJECT_IMG";
     default:
       return "CL_UNKNOWN_ERROR";
   }
