@@ -1,5 +1,6 @@
 #include "gpu_kernel.h"
 
+#include "cl/errors.h"
 #include "util.h"
 
 void check_error( cl_int error, std::string_view str )
@@ -7,7 +8,7 @@ void check_error( cl_int error, std::string_view str )
   if ( error == CL_SUCCESS )
     return;
 
-  util::error( "Error in {}: {}", str, error );
+  util::error( "Error in {}: {} ({})", str, cl_error_string( error ), error );
   std::exit( 1 );
 }
 
@@ -28,7 +29,7 @@ cl_device_id find_gpu()
   cl_uint num_devices;
   error = clGetDeviceIDs( platform_id, CL_DEVICE_TYPE_GPU, 1, &device_id, &num_devices );
   check_error( error, "clGetDeviceIDs" );
-  if ( num_platforms == 0 )
+  if ( num_devices == 0 )
   {
       util::error( "Error: No GPUs found" );
       std::exit( 1 );
@@ -37,26 +38,39 @@ cl_device_id find_gpu()
   return device_id;
 }
 
-gpu_kernel_t::gpu_kernel_t( std::vector<const char*>& source, const char* entry_point, size_t total_work, size_t work_size ) :
-  context(), queue(), program(), kernel(), buffers(), remaining_work( total_work ), work_size( work_size )
+gpu_context_t::gpu_context_t() :
+  context(), queue(), device_id()
 {
   cl_int error;
-  cl_device_id gpu_device_id = find_gpu();
-
-  context = clCreateContext( NULL, 1, &gpu_device_id, NULL, NULL, &error );
+  device_id = find_gpu();
+  context = clCreateContext( NULL, 1, &device_id, NULL, NULL, &error );
   check_error( error, "clCreateContext" );
-  queue = clCreateCommandQueueWithProperties( context, gpu_device_id, 0, &error );
+  queue = clCreateCommandQueueWithProperties( context, device_id, 0, &error );
   check_error( error, "clCreateCommandQueueWithProperties" );
+}
+
+gpu_context_t::~gpu_context_t()
+{
+  if ( queue )
+    clReleaseCommandQueue( queue );
+  if ( context )
+    clReleaseContext( context );
+}
+
+gpu_kernel_t::gpu_kernel_t( const gpu_context_t& gpu_context, std::vector<const char*>& source, const char* entry_point, size_t total_work, size_t work_size ) :
+  context( gpu_context.context ), queue( gpu_context.queue ), program(), kernel(), buffers(), remaining_work( total_work ), work_size( work_size )
+{
+  cl_int error;
   program = clCreateProgramWithSource( context, static_cast<cl_uint>( source.size() ), source.data(), NULL, &error );
   check_error( error, "clCreateProgramWithSource" );
 
-  error = clBuildProgram( program, 1, &gpu_device_id, NULL, NULL, NULL );
+  error = clBuildProgram( program, 1, &gpu_context.device_id, NULL, NULL, NULL );
   if ( error != CL_SUCCESS )
   {
       size_t log_size;
-      clGetProgramBuildInfo( program, gpu_device_id, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size );
+      clGetProgramBuildInfo( program, gpu_context.device_id, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size );
       std::string log( log_size, '\0' );
-      clGetProgramBuildInfo( program, gpu_device_id, CL_PROGRAM_BUILD_LOG, log_size, log.data(), NULL );
+      clGetProgramBuildInfo( program, gpu_context.device_id, CL_PROGRAM_BUILD_LOG, log_size, log.data(), NULL );
       util::error( "OpenCL kernel build failed: {}", error );
       util::print( log );
       std::exit( 1 );
@@ -68,13 +82,17 @@ gpu_kernel_t::gpu_kernel_t( std::vector<const char*>& source, const char* entry_
 
 gpu_kernel_t::~gpu_kernel_t()
 {
-  clReleaseEvent( enqueue_event );
+  if ( enqueue_event )
+    clReleaseEvent( enqueue_event );
   for ( auto& b : buffers )
-    clReleaseMemObject( b );
-  clReleaseKernel( kernel );
-  clReleaseProgram( program );
-  clReleaseCommandQueue( queue );
-  clReleaseContext( context );
+  {
+    if ( b )
+      clReleaseMemObject( b );
+  }
+  if ( kernel )
+    clReleaseKernel( kernel );
+  if ( program )
+    clReleaseProgram( program );
 }
 
 cl_mem gpu_kernel_t::add_buffer( size_t size, cl_mem_flags flags )

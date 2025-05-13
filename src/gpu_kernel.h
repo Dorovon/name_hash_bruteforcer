@@ -1,11 +1,17 @@
 #pragma once
 
-#ifdef __APPLE__
-#include <OpenCL/opencl.h>
-#else
 #include <CL/cl.h>
-#endif
 #include <vector>
+
+struct gpu_context_t
+{
+  cl_context context;
+  cl_command_queue queue;
+  cl_device_id device_id;
+
+  gpu_context_t();
+  ~gpu_context_t();
+};
 
 struct gpu_kernel_t
 {
@@ -18,12 +24,11 @@ struct gpu_kernel_t
   size_t work_size;
   cl_event enqueue_event;
 
-  gpu_kernel_t( std::vector<const char*>& source, const char* entry_point, size_t total_work, size_t work_size );
+  gpu_kernel_t( const gpu_context_t& gpu_context, std::vector<const char*>& source, const char* entry_point, size_t total_work, size_t work_size );
   ~gpu_kernel_t();
   cl_mem add_buffer( size_t size, cl_mem_flags flags = CL_MEM_READ_WRITE );
   void write_buffer( cl_mem buffer, const void* data, size_t size );
   cl_event read_buffer( cl_mem buffer, void* data, size_t size );
   void set_arg( cl_uint arg_index, cl_mem buffer );
   size_t execute();
-  // void process_results();
 };

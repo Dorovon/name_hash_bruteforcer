@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <format>
+#include <memory>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -370,8 +371,10 @@ int main( int argc, char** argv )
     constexpr uint64_t bucket_mask = 0xffff;
     size_t bucket_size = 0;
     std::vector<uint64_t> bucket_hashes;
+    std::unique_ptr<gpu_context_t> gpu_context;
     if ( use_gpu )
     {
+      gpu_context = std::make_unique<gpu_context_t>();
       size_t bucket_counts[ bucket_mask + 1 ];
       for ( size_t i = 0; i < bucket_mask + 1; i++ )
         bucket_counts[ i ] = 0;
@@ -485,7 +488,7 @@ int main( int argc, char** argv )
         size_t total_work = 1;
         for ( size_t i = 0; i < indices.size(); i++ )
           total_work *= LETTERS_SIZE;
-        gpu_kernel_t gpu{ source, "bruteforce", total_work, GPU_MAX_WORK_SIZE };
+        gpu_kernel_t gpu{ *gpu_context, source, "bruteforce", total_work, GPU_MAX_WORK_SIZE };
 
         // device memory buffers
         cl_mem hash_buffer;

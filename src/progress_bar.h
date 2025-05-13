@@ -123,6 +123,6 @@ struct progress_bar_t
     }
     size_t eta = static_cast<size_t>( elapsed_seconds / progress * ( 1.0 - progress ) );
     auto r = hps( elapsed_ms );
-    util::printr( "[{: >6.2f}%], {:02d}:{:02d}:{:02d} remaining, {:.2f} {}h/s", progress * 100.0, eta / 3600, eta / 60 % 60, eta % 60, r.first, r.second );
+    util::printr( "[{: >6.2f}%] {:02d}:{:02d}:{:02d} remaining, {:.2f} {}h/s", progress * 100.0, eta / 3600, eta / 60 % 60, eta % 60, r.first, r.second );
   }
 };
