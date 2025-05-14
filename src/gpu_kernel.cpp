@@ -58,7 +58,15 @@ gpu_context_t::~gpu_context_t()
 }
 
 gpu_kernel_t::gpu_kernel_t( const gpu_context_t& gpu_context, std::vector<const char*>& source, const char* entry_point, size_t total_work, size_t work_size ) :
-  context( gpu_context.context ), queue( gpu_context.queue ), program(), kernel(), buffers(), remaining_work( total_work ), work_size( work_size )
+  context( gpu_context.context ),
+  queue( gpu_context.queue ),
+  program(),
+  kernel(),
+  buffers(),
+  remaining_work( total_work ),
+  work_size( work_size ),
+  kernel_event(),
+  write_events()
 {
   cl_int error;
   program = clCreateProgramWithSource( context, static_cast<cl_uint>( source.size() ), source.data(), NULL, &error );
@@ -67,13 +75,17 @@ gpu_kernel_t::gpu_kernel_t( const gpu_context_t& gpu_context, std::vector<const 
   error = clBuildProgram( program, 1, &gpu_context.device_id, NULL, NULL, NULL );
   if ( error != CL_SUCCESS )
   {
+    if ( error == CL_BUILD_PROGRAM_FAILURE )
+    {
+      util::error( "Error in clBuildProgram: {} ({})", cl_error_string( error ), error );
       size_t log_size;
       clGetProgramBuildInfo( program, gpu_context.device_id, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size );
       std::string log( log_size, '\0' );
       clGetProgramBuildInfo( program, gpu_context.device_id, CL_PROGRAM_BUILD_LOG, log_size, log.data(), NULL );
-      util::error( "OpenCL kernel build failed: {}", error );
       util::print( log );
       std::exit( 1 );
+    }
+    check_error( error, "clBuildProgram" );
   }
 
   kernel = clCreateKernel( program, entry_point, &error );
@@ -82,8 +94,13 @@ gpu_kernel_t::gpu_kernel_t( const gpu_context_t& gpu_context, std::vector<const 
 
 gpu_kernel_t::~gpu_kernel_t()
 {
-  if ( enqueue_event )
-    clReleaseEvent( enqueue_event );
+  if ( kernel_event )
+    clReleaseEvent( kernel_event );
+  for ( auto& e : write_events )
+  {
+    if ( e )
+      clReleaseEvent( e );
+  }
   for ( auto& b : buffers )
   {
     if ( b )
@@ -105,14 +122,16 @@ cl_mem gpu_kernel_t::add_buffer( size_t size, cl_mem_flags flags )
 
 void gpu_kernel_t::write_buffer( cl_mem buffer, const void* data, size_t size )
 {
-  cl_int error = clEnqueueWriteBuffer( queue, buffer, CL_FALSE, 0, size, data, 0, NULL, NULL );
+  cl_event write_event;
+  cl_int error = clEnqueueWriteBuffer( queue, buffer, CL_FALSE, 0, size, data, 0, NULL, &write_event );
+  write_events.push_back( write_event );
   check_error( error, "clEnqueueWriteBuffer" );
 }
 
 cl_event gpu_kernel_t::read_buffer( cl_mem buffer, void* data, size_t size )
 {
   cl_event read_event;
-  cl_int error = clEnqueueReadBuffer( queue, buffer, CL_FALSE, 0, size, data, 1, &enqueue_event, &read_event );
+  cl_int error = clEnqueueReadBuffer( queue, buffer, CL_FALSE, 0, size, data, 1, &kernel_event, &read_event );
   check_error( error, "clEnqueueReadBuffer" );
   return read_event;
 }
@@ -127,7 +146,13 @@ size_t gpu_kernel_t::execute()
 {
   size_t this_work_size = ( remaining_work < work_size ) ? remaining_work : work_size;
   remaining_work -= this_work_size;
-  cl_int error = clEnqueueNDRangeKernel( queue, kernel, 1, NULL, &this_work_size, NULL, 0, NULL, &enqueue_event );
+  cl_int error = clEnqueueNDRangeKernel( queue, kernel, 1, NULL, &this_work_size, NULL, static_cast<cl_uint>( write_events.size() ), write_events.data(), &kernel_event );
   check_error( error, "clEnqueueNDRangeKernel" );
+  for ( auto& e : write_events )
+  {
+    if ( e )
+      clReleaseEvent( e );
+  }
+  write_events.clear();
   return this_work_size;
 }

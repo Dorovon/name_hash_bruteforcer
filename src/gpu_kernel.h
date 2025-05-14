@@ -22,7 +22,8 @@ struct gpu_kernel_t
   std::vector<cl_mem> buffers;
   size_t remaining_work;
   size_t work_size;
-  cl_event enqueue_event;
+  cl_event kernel_event;
+  std::vector<cl_event> write_events;
 
   gpu_kernel_t( const gpu_context_t& gpu_context, std::vector<const char*>& source, const char* entry_point, size_t total_work, size_t work_size );
   ~gpu_kernel_t();

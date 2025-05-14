@@ -507,14 +507,15 @@ int main( int argc, char** argv )
 
         // host buffers and events
         size_t batch_index = 0;
-        cl_event read_events[ 2 * NUM_GPU_BUFFERS ];
+        constexpr size_t num_read_events = 2;
+        cl_event read_events[ num_read_events * NUM_GPU_BUFFERS ];
         std::vector<size_t> batch_counts[ NUM_GPU_BUFFERS ];
         cl_uint num_results[ NUM_GPU_BUFFERS ];
         std::vector<size_t> results[ NUM_GPU_BUFFERS ];
         for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
         {
-          read_events[ 2 * i ] = nullptr;
-          read_events[ 2 * i + 1 ] = nullptr;
+          for ( size_t j = 0; j < num_read_events; j++ )
+            read_events[ num_read_events * i + j ] = nullptr;
           num_results[ i ] = 0;
           results[ i ].resize( GPU_BATCH_MAX_RESULTS );
         }
@@ -522,33 +523,37 @@ int main( int argc, char** argv )
         // check any positive results from the GPU
         auto process_results = [ & ] ( size_t buffer_index )
         {
-          if ( read_events[ 2 * buffer_index ] && read_events[ 2 * buffer_index + 1 ] )
+          for ( size_t i = 0; i < num_read_events; i++ )
           {
-            clWaitForEvents( 2, &read_events[ 2 * buffer_index ] );
-            if ( num_results[ buffer_index ] >= GPU_BATCH_MAX_RESULTS )
-              util::error( "Warning: GPU batch may have exceeded the maximum number of allowed results ({}). Consider using the \"-m\" option to increase this limit.", GPU_BATCH_MAX_RESULTS );
-            for ( size_t i = 0; i < num_results[ buffer_index ]; i++ )
+            if ( !read_events[ num_read_events * buffer_index + i ] )
+              return;
+          }
+
+          clWaitForEvents( num_read_events, &read_events[ num_read_events * buffer_index ] );
+          if ( num_results[ buffer_index ] >= GPU_BATCH_MAX_RESULTS )
+            util::error( "Warning: GPU batch may have exceeded the maximum number of allowed results ({}). Consider using the \"-m\" option to increase this limit.", GPU_BATCH_MAX_RESULTS );
+          for ( size_t i = 0; i < num_results[ buffer_index ]; i++ )
+          {
+            std::vector<size_t> temp_counts = batch_counts[ buffer_index ];
+            if ( next_combination( temp_counts, results[ buffer_index ][ i ] ) )
             {
-              std::vector<size_t> temp_counts = batch_counts[ buffer_index ];
-              if ( next_combination( temp_counts, results[ buffer_index ][ i ] ) )
-              {
-                get_combination( current_string, temp_counts, indices, indices2 );
-                uint64_t hash = hashlittle2( current_string );
-                auto match = name_hashes.find( hash );
-                if ( match != name_hashes.end() )
-                  print_match( original_pattern, current_string.as_string(), match->second );
-                else if ( hash != 0 ) // zeros are used to fill in the buckets, so this isn't a false positive worth warning about
-                  util::error( "Error: GPU result did not match on CPU ({})", results[ buffer_index ][ i ] );
-              }
-              else
-              {
-                util::error( "Error: GPU result is out of range ({})", results[ buffer_index ][ i ] );
-              }
+              get_combination( current_string, temp_counts, indices, indices2 );
+              uint64_t hash = hashlittle2( current_string );
+              auto match = name_hashes.find( hash );
+              if ( match != name_hashes.end() )
+                print_match( original_pattern, current_string.as_string(), match->second );
+              else if ( hash != 0 ) // zeros are used to fill in the buckets, so this isn't a false positive worth warning about
+                util::error( "Error: GPU result did not match on CPU ({}): {}", results[ buffer_index ][ i ], current_string.as_string() );
             }
-            clReleaseEvent( read_events[ 2 * buffer_index ] );
-            clReleaseEvent( read_events[ 2 * buffer_index + 1 ] );
-            read_events[ 2 * buffer_index ] = nullptr;
-            read_events[ 2 * buffer_index + 1 ] = nullptr;
+            else
+            {
+              util::error( "Error: GPU result is out of range ({})", results[ buffer_index ][ i ] );
+            }
+          }
+          for ( size_t i = 0; i < num_read_events; i++ )
+          {
+            clReleaseEvent( read_events[ num_read_events * buffer_index + i ] );
+            read_events[ num_read_events * buffer_index + i ] = nullptr;
           }
         };
 
@@ -558,15 +563,15 @@ int main( int argc, char** argv )
           constexpr cl_uint zero = 0;
           size_t buffer_index = batch_index % NUM_GPU_BUFFERS;
           process_results( buffer_index );
-          gpu.write_buffer( initial_counts_buffer[ buffer_index ], counts.data(), counts.size() * sizeof( size_t ) );
+          batch_counts[ buffer_index ] = counts;
+          gpu.write_buffer( initial_counts_buffer[ buffer_index ], batch_counts[ buffer_index ].data(), batch_counts[ buffer_index ].size() * sizeof( size_t ) );
           gpu.write_buffer( num_results_buffer[ buffer_index ], &zero, sizeof( cl_uint ) );
           gpu.set_arg( 0, initial_counts_buffer[ buffer_index ] );
           gpu.set_arg( 1, num_results_buffer[ buffer_index ] );
           gpu.set_arg( 2, results_buffer[ buffer_index ] );
           size_t this_work_size = gpu.execute();
-          read_events[ 2 * buffer_index ] = gpu.read_buffer( num_results_buffer[ buffer_index ], &num_results[ buffer_index ], sizeof( cl_uint ) );
-          read_events[ 2 * buffer_index + 1 ] = gpu.read_buffer( results_buffer[ buffer_index ], results[ buffer_index ].data(), GPU_BATCH_MAX_RESULTS * sizeof( size_t ) );
-          batch_counts[ buffer_index ] = counts;
+          read_events[ num_read_events * buffer_index ] = gpu.read_buffer( num_results_buffer[ buffer_index ], &num_results[ buffer_index ], sizeof( cl_uint ) );
+          read_events[ num_read_events * buffer_index + 1 ] = gpu.read_buffer( results_buffer[ buffer_index ], results[ buffer_index ].data(), GPU_BATCH_MAX_RESULTS * sizeof( size_t ) );
           batch_index++;
           if ( !quiet )
           {

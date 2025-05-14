@@ -18,8 +18,18 @@ typedef uint uint32_t;
 typedef ulong uint64_t;
 
 constant unsigned char letters[ NUM_LETTERS ] = { LETTERS };
+
+#if NUM_INDICES > 0
 constant size_t indices[ NUM_INDICES ] = { INDICES };
+#else
+constant size_t indices[ 1 ] = { 0 };
+#endif
+
+#if NUM_INDICES2 > 0
 constant size_t indices2[ NUM_INDICES2 ] = { INDICES2 };
+#else
+constant size_t indices2[ 1 ] = { 0 };
+#endif
 
 inline uint32_t rotate_left( uint32_t value, size_t distance )
 {

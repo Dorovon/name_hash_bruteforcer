@@ -119,7 +119,7 @@ inline void printr( std::string_view s )
   std::cout << s;
   for ( size_t i = s.size(); i < last_printr_size; i++ )
     std::cout << ' ';
-  std::cout <<  '\r' << std::flush;
+  std::cout << '\r' << std::flush;
   last_printr_size = s.size();
 }
 
