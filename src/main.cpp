@@ -597,7 +597,10 @@ int main( int argc, char** argv )
             if ( thread_index > 0 )
             {
               if ( !next_combination( thread_counts, thread_index ) )
+              {
+                progress_bar.finish_thread();
                 return;
+              }
             }
             size_t update_count = 0;
             do
