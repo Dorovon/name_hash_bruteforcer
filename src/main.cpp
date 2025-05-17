@@ -512,6 +512,7 @@ int main( int argc, char** argv )
         cl_mem initial_counts_buffer[ NUM_GPU_BUFFERS ];
         cl_mem num_results_buffer[ NUM_GPU_BUFFERS ];
         cl_mem results_buffer[ NUM_GPU_BUFFERS ];
+        constexpr cl_uint zero = 0;
         hash_buffer = gpu.add_buffer( bucket_hashes.size() * sizeof( uint64_t ) );
         gpu.write_buffer( hash_buffer, bucket_hashes.data(), bucket_hashes.size() * sizeof( uint64_t ) );
         gpu.set_arg( 3, hash_buffer );
@@ -549,7 +550,7 @@ int main( int argc, char** argv )
           clWaitForEvents( num_read_events, &read_events[ num_read_events * buffer_index ] );
           if ( num_results[ buffer_index ] >= GPU_BATCH_MAX_RESULTS )
             util::error( "Warning: GPU batch may have exceeded the maximum number of allowed results ({}). Consider using the \"-m\" option to increase this limit.", GPU_BATCH_MAX_RESULTS );
-          for ( size_t i = 0; i < num_results[ buffer_index ]; i++ )
+          for ( size_t i = 0; i < num_results[ buffer_index ] && i < GPU_BATCH_MAX_RESULTS; i++ )
           {
             std::vector<size_t> temp_counts = batch_counts[ buffer_index ];
             if ( next_combination( temp_counts, results[ buffer_index ][ i ] ) )
@@ -577,7 +578,6 @@ int main( int argc, char** argv )
         // check all combinations on the GPU
         do
         {
-          constexpr cl_uint zero = 0;
           size_t buffer_index = batch_index % NUM_GPU_BUFFERS;
           process_results( buffer_index );
           batch_counts[ buffer_index ] = counts;
