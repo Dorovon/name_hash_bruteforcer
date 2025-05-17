@@ -67,7 +67,17 @@ bool next_combination( std::vector<size_t>& counts, size_t increment = 1 )
 
 void set_alphabet( std::string_view str )
 {
-  LETTERS = str;
+  if ( str == "default" )
+    LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
+  else if ( str == "digits" || str == "numbers" )
+    LETTERS = "0123456789";
+  else if ( str == "letters" )
+    LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  else if ( str == "hex" )
+    LETTERS = "0123456789ABCDEF";
+  else
+    LETTERS = str;
+
   LETTERS_SIZE = LETTERS.size();
   util::to_upper( LETTERS );
 }
@@ -92,6 +102,11 @@ void print_help()
   util::print( usage_message() );
   util::print( "\nOPTIONS\n"
                "  -a  use the given alphabet instead of the default\n"
+               "      the following names are shortcuts for predefined alphabets\n"
+               "        \"default\": ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_\n"
+               "        \"digits\" or \"numbers\": 0123456789\n"
+               "        \"letters\": ABCDEFGHIJKLMNOPQRSTUVWXYZ\n"
+               "        \"hex\": 0123456789ABCDEF\n"
                "  -c  limit the number of threads used to the given number\n"
                "  -l  use the given listfile for modes that need one\n"
                "      this will also filter the given name hash file to ignore names that are already known\n"
