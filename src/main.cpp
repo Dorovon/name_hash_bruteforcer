@@ -65,19 +65,23 @@ bool next_combination( std::vector<size_t>& counts, size_t increment = 1 )
   return true;
 }
 
-void set_alphabet( std::string_view str )
+std::string_view get_alphabet( std::string_view str )
 {
   if ( str == "default" )
-    LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
+    return "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
   else if ( str == "digits" || str == "numbers" )
-    LETTERS = "0123456789";
+    return "0123456789";
   else if ( str == "letters" )
-    LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   else if ( str == "hex" )
-    LETTERS = "0123456789ABCDEF";
-  else
-    LETTERS = str;
+    return "0123456789ABCDEF";
 
+  return str;
+}
+
+void set_alphabet( std::string_view str )
+{
+  LETTERS = get_alphabet( str );
   LETTERS_SIZE = LETTERS.size();
   util::to_upper( LETTERS );
 }
@@ -425,7 +429,7 @@ int main( int argc, char** argv )
           size_2++;
       }
       for ( size_t j = 0; j < size_1 || j < size_2; j++ )
-        pattern_combinations *= alphabets[ i ].size();
+        pattern_combinations *= get_alphabet( alphabets[ i ] ).size();
       total_combinations += pattern_combinations;
     }
     progress_bar_t progress_bar( total_combinations );
