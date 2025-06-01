@@ -29,7 +29,7 @@ std::vector<cl_platform_id> get_platforms()
 
   std::vector<cl_platform_id> platform_ids( num_platforms );
   error = clGetPlatformIDs( num_platforms, platform_ids.data(), NULL );
-  check_error( error, "clGetDeviceIDs" );
+  check_error( error, "clGetPlatformIDs" );
 
   return platform_ids;
 }
@@ -39,12 +39,10 @@ std::vector<cl_device_id> get_gpus( cl_platform_id platform_id )
   cl_int error;
   cl_uint num_devices;
   error = clGetDeviceIDs( platform_id, CL_DEVICE_TYPE_GPU, 0, NULL, &num_devices );
-  check_error( error, "clGetDeviceIDs" );
-  if ( num_devices == 0 )
-  {
-    util::error( "Error: No GPUs found" );
-    std::exit( 1 );
-  }
+  if ( error != CL_DEVICE_NOT_FOUND )
+    check_error( error, "clGetDeviceIDs" );
+  if ( error == CL_DEVICE_NOT_FOUND || num_devices == 0 )
+    return {}; // no GPUs found
 
   std::vector<cl_device_id> device_ids( num_devices );
   error = clGetDeviceIDs( platform_id, CL_DEVICE_TYPE_GPU, num_devices, device_ids.data(), NULL );
@@ -270,12 +268,18 @@ gpu_pool_t::gpu_pool_t( size_t num_buffers_per_device ) :
   for ( size_t i = 0; i < gpu_context.contexts.size(); i++ )
   {
     cl_context context = gpu_context.contexts[ i ];
-    for ( size_t j = 0; j < gpu_context.device_ids.size(); j++ )
+    for ( size_t j = 0; j < gpu_context.device_ids[ i ].size(); j++ )
     {
       cl_command_queue queue = gpu_context.queues[ i ][ j ];
       cl_device_id device_id = gpu_context.device_ids[ i ][ j ];
       gpus.emplace_back( context, queue, device_id );
     }
+  }
+
+  if ( gpus.size() == 0 )
+  {
+    util::error( "No OpenCL devices found." );
+    std::exit( 1 );
   }
 }
 
