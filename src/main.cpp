@@ -1,4 +1,4 @@
-#include "gpu_kernel.h"
+#include "gpu.h"
 #include "hash_string.h"
 #include "hashlittle2.h"
 #include "kernels.h"
@@ -8,6 +8,7 @@
 #include <chrono>
 #include <format>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -21,6 +22,13 @@ static const char* PROGRAM_NAME = "bruteforcer";
 static size_t GPU_BATCH_MAX_RESULTS = 1024;
 static size_t GPU_MAX_WORK_SIZE = 2ull << 30;
 constexpr size_t NUM_GPU_BUFFERS = 2;
+
+enum gpu_pattern_buffers : size_t
+{
+  B_INITIAL_COUNTS = 0,
+  B_NUM_RESULTS = 1,
+  B_RESULTS = 2,
+};
 
 void print_match( std::string_view original_pattern, std::string_view match, uint32_t file_data_id = 0 )
 {
@@ -238,7 +246,7 @@ int main( int argc, char** argv )
   if ( !listfile_path.empty() )
   {
     listfile_data = util::read_text_file( listfile_path );
-    util::read_lines( listfile_data, [&] ( std::string_view line )
+    util::read_lines( listfile_data, [ & ]( std::string_view line )
     {
       auto splits = util::string_split( line, ";" );
       if ( splits.size() >= 2 )
@@ -250,7 +258,7 @@ int main( int argc, char** argv )
   if ( !pattern_path.empty() )
   {
     std::string pattern_data = util::read_text_file( pattern_path );
-    util::read_lines( pattern_data, [&] ( std::string_view line )
+    util::read_lines( pattern_data, [ & ]( std::string_view line )
     {
       if ( !line.empty() && line[ 0 ] != '#' )
       {
@@ -273,7 +281,7 @@ int main( int argc, char** argv )
   catch ( std::exception& )
   {
     std::string name_hash_data = util::read_text_file( name_hash_str );
-    util::read_lines( name_hash_data, [&] ( std::string_view line )
+    util::read_lines( name_hash_data, [ & ]( std::string_view line )
     {
       auto splits = util::string_split( line, ";" );
       if ( splits.size() >= 2 )
@@ -338,7 +346,7 @@ int main( int argc, char** argv )
     progress_bar.reset_threads();
     for ( int i = 0; i < NUM_THREADS; i++ )
     {
-      threads.emplace_back( [&]( int thread_index )
+      threads.emplace_back( [ & ]( int thread_index )
       {
         size_t update_count = 0;
         for ( size_t b = thread_index; b < base_names_vec.size(); b += NUM_THREADS )
@@ -372,7 +380,7 @@ int main( int argc, char** argv )
     }
     if ( !quiet )
     {
-      threads.emplace_back( [&] ( int )
+      threads.emplace_back( [ & ]( int )
       {
         using namespace std::chrono_literals;
         while ( !progress_bar.is_finished( NUM_THREADS ) )
@@ -389,32 +397,6 @@ int main( int argc, char** argv )
   else
   {
     // look for matches using the provided pattern(s)
-    constexpr uint64_t bucket_mask = 0xffff;
-    size_t bucket_size = 0;
-    std::vector<uint64_t> bucket_hashes;
-    std::unique_ptr<gpu_context_t> gpu_context;
-    if ( use_gpu )
-    {
-      gpu_context = std::make_unique<gpu_context_t>();
-      size_t bucket_counts[ bucket_mask + 1 ];
-      for ( size_t i = 0; i < bucket_mask + 1; i++ )
-        bucket_counts[ i ] = 0;
-      for ( auto [ hash, _ ] : name_hashes )
-        bucket_counts[ hash & bucket_mask ]++;
-      for ( auto b : bucket_counts )
-      {
-        if ( b > bucket_size )
-          bucket_size = b;
-      }
-      bucket_hashes.resize( bucket_size * bucket_mask + 1, 0 );
-      for ( auto [ hash, _ ] : name_hashes )
-      {
-        size_t bucket_index = hash & bucket_mask;
-        bucket_hashes[ bucket_size * bucket_index + bucket_counts[ bucket_index ] - 1 ] = hash;
-        bucket_counts[ bucket_index ]--;
-      }
-    }
-
     double total_combinations = 0;
     for ( size_t i = 0; i < patterns.size(); i++ )
     {
@@ -433,6 +415,33 @@ int main( int argc, char** argv )
       total_combinations += pattern_combinations;
     }
     progress_bar_t progress_bar( total_combinations );
+
+    constexpr uint64_t bucket_mask = 0xffff;
+    size_t bucket_size = 0;
+    std::vector<uint64_t> bucket_hashes;
+    std::unique_ptr<gpu_pool_t> gpu_pool;
+    std::mutex gpu_mutex;
+    if ( use_gpu )
+    {
+      gpu_pool = std::make_unique<gpu_pool_t>( NUM_GPU_BUFFERS );
+      size_t bucket_counts[ bucket_mask + 1 ];
+      for ( size_t i = 0; i < bucket_mask + 1; i++ )
+        bucket_counts[ i ] = 0;
+      for ( auto [ hash, _ ] : name_hashes )
+        bucket_counts[ hash & bucket_mask ]++;
+      for ( auto b : bucket_counts )
+      {
+        if ( b > bucket_size )
+          bucket_size = b;
+      }
+      bucket_hashes.resize( bucket_size * bucket_mask + 1, 0 );
+      for ( auto [ hash, _ ] : name_hashes )
+      {
+        size_t bucket_index = hash & bucket_mask;
+        bucket_hashes[ bucket_size * bucket_index + bucket_counts[ bucket_index ] - 1 ] = hash;
+        bucket_counts[ bucket_index ]--;
+      }
+    }
 
     for ( size_t pattern_index = 0; pattern_index < patterns.size(); pattern_index++ )
     {
@@ -509,55 +518,60 @@ int main( int argc, char** argv )
         size_t total_work = 1;
         for ( size_t i = 0; i < indices.size(); i++ )
           total_work *= LETTERS_SIZE;
-        gpu_kernel_t gpu{ *gpu_context, source, "bruteforce", total_work, GPU_MAX_WORK_SIZE };
+        size_t remaining_work = total_work;
 
-        // device memory buffers
-        cl_mem hash_buffer;
-        cl_mem initial_counts_buffer[ NUM_GPU_BUFFERS ];
-        cl_mem num_results_buffer[ NUM_GPU_BUFFERS ];
-        cl_mem results_buffer[ NUM_GPU_BUFFERS ];
+        gpu_pool->init_gpus( source, "bruteforce" );
+
+        gpu_pool->set_fn_init_shared_buffers( [ & ]( gpu_t& gpu )
+        {
+          cl_mem hash_buffer = gpu.add_buffer( bucket_hashes.size() * sizeof( uint64_t ) );
+          gpu.write_buffer( hash_buffer, bucket_hashes.data(), bucket_hashes.size() * sizeof( uint64_t ) );
+          gpu.set_arg( 3, hash_buffer );
+        });
+
+        gpu_pool->set_fn_init_device_buffers( [ & ]( gpu_t& gpu )
+        {
+          gpu.add_indexed_buffer<size_t>( B_INITIAL_COUNTS, counts.size() );
+          gpu.add_indexed_buffer<cl_uint>( B_NUM_RESULTS, 1 );
+          gpu.add_indexed_buffer<size_t>( B_RESULTS, GPU_BATCH_MAX_RESULTS );
+        });
+
         constexpr cl_uint zero = 0;
-        hash_buffer = gpu.add_buffer( bucket_hashes.size() * sizeof( uint64_t ) );
-        gpu.write_buffer( hash_buffer, bucket_hashes.data(), bucket_hashes.size() * sizeof( uint64_t ) );
-        gpu.set_arg( 3, hash_buffer );
-        for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
+        gpu_pool->set_fn_prepare_batch( [ & ]( gpu_t& gpu )
         {
-          initial_counts_buffer[ i ] = gpu.add_buffer( counts.size() * sizeof( size_t ) );
-          num_results_buffer[ i ] = gpu.add_buffer( sizeof( cl_uint ) );
-          results_buffer[ i ] = gpu.add_buffer( GPU_BATCH_MAX_RESULTS * sizeof( size_t ) );
-        }
+          std::lock_guard<std::mutex> guard( gpu_mutex );
+          gpu.write_indexed_buffer( B_INITIAL_COUNTS, counts.data() );
+          gpu.write_indexed_buffer( B_NUM_RESULTS, &zero );
+          gpu.set_arg( 0, B_INITIAL_COUNTS );
+          gpu.set_arg( 1, B_NUM_RESULTS );
+          gpu.set_arg( 2, B_RESULTS );
+          size_t this_work_size = ( remaining_work < GPU_MAX_WORK_SIZE ) ? remaining_work : GPU_MAX_WORK_SIZE;
+          remaining_work -= this_work_size;
+          gpu.set_next_work_size( this_work_size );
+          return next_combination( counts, GPU_MAX_WORK_SIZE );
+        });
 
-        // host buffers and events
-        size_t batch_index = 0;
-        constexpr size_t num_read_events = 2;
-        cl_event read_events[ num_read_events * NUM_GPU_BUFFERS ];
-        std::vector<size_t> batch_counts[ NUM_GPU_BUFFERS ];
-        cl_uint num_results[ NUM_GPU_BUFFERS ];
-        std::vector<size_t> results[ NUM_GPU_BUFFERS ];
-        for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
+        gpu_pool->set_fn_execute_batch( [ & ]( gpu_t& gpu )
         {
-          for ( size_t j = 0; j < num_read_events; j++ )
-            read_events[ num_read_events * i + j ] = nullptr;
-          num_results[ i ] = 0;
-          results[ i ].resize( GPU_BATCH_MAX_RESULTS );
-        }
+          gpu.execute();
+          gpu.read_buffer( B_NUM_RESULTS );
+          gpu.read_buffer( B_RESULTS );
+        });
 
-        // check any positive results from the GPU
-        auto process_results = [ & ] ( size_t buffer_index )
+        gpu_pool->set_fn_batch_results( [ & ]( gpu_t& gpu )
         {
-          for ( size_t i = 0; i < num_read_events; i++ )
+          std::lock_guard<std::mutex> guard( gpu_mutex );
+          std::vector<size_t> temp_counts = counts;
+          cl_uint num_results = gpu.get_host_buffer<cl_uint>( B_NUM_RESULTS )[ 0 ];
+          const size_t* results = gpu.get_host_buffer<size_t>( B_RESULTS );
+          const size_t* batch_counts = gpu.get_host_buffer<size_t>( B_INITIAL_COUNTS );
+          if ( num_results > GPU_BATCH_MAX_RESULTS )
+            util::error( "Warning: GPU batch exceeded the maximum number of allowed results ({} > {}). Consider using the \"-m\" option to see them all.", num_results, GPU_BATCH_MAX_RESULTS );
+          for ( size_t i = 0; i < num_results && i < GPU_BATCH_MAX_RESULTS; i++ )
           {
-            if ( !read_events[ num_read_events * buffer_index + i ] )
-              return;
-          }
-
-          clWaitForEvents( num_read_events, &read_events[ num_read_events * buffer_index ] );
-          if ( num_results[ buffer_index ] >= GPU_BATCH_MAX_RESULTS )
-            util::error( "Warning: GPU batch may have exceeded the maximum number of allowed results ({}). Consider using the \"-m\" option to increase this limit.", GPU_BATCH_MAX_RESULTS );
-          for ( size_t i = 0; i < num_results[ buffer_index ] && i < GPU_BATCH_MAX_RESULTS; i++ )
-          {
-            std::vector<size_t> temp_counts = batch_counts[ buffer_index ];
-            if ( next_combination( temp_counts, results[ buffer_index ][ i ] ) )
+            for ( size_t c = 0; c < counts.size(); c++ )
+              temp_counts[ c ] = batch_counts[ c ];
+            if ( next_combination( temp_counts, results[ i ] ) )
             {
               get_combination( current_string, temp_counts, indices, indices2 );
               uint64_t hash = hashlittle2( current_string );
@@ -565,44 +579,21 @@ int main( int argc, char** argv )
               if ( match != name_hashes.end() )
                 print_match( original_pattern, current_string.as_string(), match->second );
               else if ( hash != 0 ) // zeros are used to fill in the buckets, so this isn't a false positive worth warning about
-                util::error( "Error: GPU result did not match on CPU ({}): {}", results[ buffer_index ][ i ], current_string.as_string() );
+                util::error( "Error: GPU result did not match on CPU ({}): {}", results[ i ], current_string.as_string() );
             }
             else
             {
-              util::error( "Error: GPU result is out of range ({})", results[ buffer_index ][ i ] );
+              util::error( "Error: GPU result is out of range ({})", results[ i ] );
             }
           }
-          for ( size_t i = 0; i < num_read_events; i++ )
-          {
-            clReleaseEvent( read_events[ num_read_events * buffer_index + i ] );
-            read_events[ num_read_events * buffer_index + i ] = nullptr;
-          }
-        };
-
-        // check all combinations on the GPU
-        do
-        {
-          size_t buffer_index = batch_index % NUM_GPU_BUFFERS;
-          process_results( buffer_index );
-          batch_counts[ buffer_index ] = counts;
-          gpu.write_buffer( initial_counts_buffer[ buffer_index ], batch_counts[ buffer_index ].data(), batch_counts[ buffer_index ].size() * sizeof( size_t ) );
-          gpu.write_buffer( num_results_buffer[ buffer_index ], &zero, sizeof( cl_uint ) );
-          gpu.set_arg( 0, initial_counts_buffer[ buffer_index ] );
-          gpu.set_arg( 1, num_results_buffer[ buffer_index ] );
-          gpu.set_arg( 2, results_buffer[ buffer_index ] );
-          size_t this_work_size = gpu.execute();
-          read_events[ num_read_events * buffer_index ] = gpu.read_buffer( num_results_buffer[ buffer_index ], &num_results[ buffer_index ], sizeof( cl_uint ) );
-          read_events[ num_read_events * buffer_index + 1 ] = gpu.read_buffer( results_buffer[ buffer_index ], results[ buffer_index ].data(), GPU_BATCH_MAX_RESULTS * sizeof( size_t ) );
-          batch_index++;
           if ( !quiet )
           {
-            progress_bar.increment( this_work_size );
+            progress_bar.increment( gpu.get_last_work_size() );
             progress_bar.out();
           }
-        } while ( next_combination( counts, GPU_MAX_WORK_SIZE ) );
+        });
 
-        for ( size_t i = 0; i < NUM_GPU_BUFFERS; i++ )
-          process_results( i );
+        gpu_pool->execute();
       }
       else
       {
@@ -611,7 +602,7 @@ int main( int argc, char** argv )
         progress_bar.reset_threads();
         for ( int i = 0; i < NUM_THREADS; i++ )
         {
-          threads.emplace_back( [&]( int thread_index )
+          threads.emplace_back( [ & ]( int thread_index )
           {
             hash_string_t thread_string{ original_pattern };
             std::vector<size_t> thread_counts = counts;
@@ -647,7 +638,7 @@ int main( int argc, char** argv )
         }
         if ( !quiet )
         {
-          threads.emplace_back( [&] ( int )
+          threads.emplace_back( [ & ]( int )
           {
             using namespace std::chrono_literals;
             while ( !progress_bar.is_finished( NUM_THREADS ) )
