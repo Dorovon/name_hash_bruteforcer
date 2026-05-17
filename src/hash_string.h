@@ -3,8 +3,16 @@
 #include <memory>
 #include <string_view>
 
+enum hash_type : size_t
+{
+  H_HASHLITTLE2 = 0,
+  H_SSTRHASH = 1,
+};
+
 struct hash_string_t
 {
+  size_t hash_type;
+
   // length of the string
   size_t size;
 
@@ -19,24 +27,25 @@ struct hash_string_t
   uint32_t c;
 
   hash_string_t();
-  hash_string_t( std::string_view str );
+  hash_string_t( std::string_view str, size_t hash_type );
   void compute_partial_hash();
   hash_string_t& operator=( std::string_view str );
   unsigned char& operator[]( const size_t index );
   const unsigned char& operator[]( const size_t index ) const;
-  const char* as_string() const;
+  std::string as_string( std::string_view original_pattern = {} ) const;
   const unsigned char* data() const;
 };
 
 #include "hashlittle2.h"
+#include "sstrhash.h"
 #include "util.h"
 
 hash_string_t::hash_string_t() :
-  size(), _data(), offset(), a(), b(), c()
+  hash_type(), size(), _data(), offset(), a(), b(), c()
 {}
 
-hash_string_t::hash_string_t( std::string_view str ) :
-  size( str.size() ), offset(), a(), b(), c()
+hash_string_t::hash_string_t( std::string_view str, size_t hash_type ) :
+  hash_type( hash_type), size( str.size() ), offset(), a(), b(), c()
 {
   data_size = str.size();
   if ( ( data_size % 12 ) != 0 )
@@ -52,7 +61,7 @@ hash_string_t::hash_string_t( std::string_view str ) :
 
 hash_string_t& hash_string_t::operator=( std::string_view str )
 {
-  *this = hash_string_t{ str };
+  *this = hash_string_t{ str, hash_type };
   return *this;
 }
 
@@ -66,9 +75,22 @@ const unsigned char& hash_string_t::operator[]( const size_t index ) const
   return _data.get()[ index ];
 }
 
-const char* hash_string_t::as_string() const
+std::string hash_string_t::as_string( std::string_view original_pattern ) const
 {
-  return reinterpret_cast<const char*>( _data.get() );
+  std::string s = "";
+  for ( size_t i = 0; i < size; i++ )
+  {
+    unsigned char ch;
+    if ( i < original_pattern.size() && original_pattern[ i ] != '*' && original_pattern[ i ] != '%' )
+      ch = original_pattern[ i ];
+    else
+      ch = util::to_lower( _data.get()[ i ] );
+    if ( ch >= 32 && ch < 127 )
+      s += static_cast<char>( ch );
+    else
+      s += std::format( "<0x{:02x}>", static_cast<unsigned int>( ch ) );
+  }
+  return s;
 }
 
 const unsigned char* hash_string_t::data() const
@@ -78,19 +100,33 @@ const unsigned char* hash_string_t::data() const
 
 void hash_string_t::compute_partial_hash()
 {
-  if ( ( *this )[ 0 ] == '*' || ( *this )[ 0 ] == '%' )
+  if ( hash_type == H_HASHLITTLE2 )
   {
-    hashlittle2_precompute( *this, 0 );
-    return;
-  }
+    if ( ( *this )[ 0 ] == '*' || ( *this )[ 0 ] == '%' )
+    {
+      hashlittle2_precompute( *this, 0 );
+      return;
+    }
 
-  size_t i;
-  for ( i = 0; i < size - 1; i++ )
-  {
-    if ( ( *this )[ i + 1 ] == '*' || ( *this )[ i + 1 ] == '%' )
-      break;
+    size_t i;
+    for ( i = 0; i < size - 1; i++ )
+    {
+      if ( ( *this )[ i + 1 ] == '*' || ( *this )[ i + 1 ] == '%' )
+        break;
+    }
+    size_t this_size = i - i % 12;
+    hashlittle2_precompute( *this, this_size );
+    offset = this_size;
   }
-  size_t this_size = i - i % 12;
-  hashlittle2_precompute( *this, this_size );
-  offset = this_size;
+  else if ( hash_type == H_SSTRHASH )
+  {
+    size_t i;
+    for ( i = 0; i < size; i++ )
+    {
+      if ( ( *this )[ i ] == '*' || ( *this )[ i ] == '%' )
+        break;
+    }
+    s_str_hash_precompute( *this, i );
+    offset = i;
+  }
 }

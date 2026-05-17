@@ -180,4 +180,10 @@ inline void print_green( std::format_string<Args...> fmt, Args&&... args )
 {
   print_green( std::format( fmt, std::forward<Args>( args )... ) );
 }
+
+inline void strip( std::string& str )
+{
+  while ( !str.empty() && std::isspace( str[ str.size() - 1 ] ) )
+    str.erase( str.size() - 1 );
+}
 }

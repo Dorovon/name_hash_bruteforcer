@@ -160,6 +160,18 @@ void gpu_t::init( std::vector<const char*>& source, const char* entry_point, siz
     check_error( error, "clBuildProgram" );
   }
 
+  // print warnings
+  // size_t log_size;
+  // clGetProgramBuildInfo( program, device_id, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size );
+  // if ( log_size > 0 )
+  // {
+  //   std::string log( log_size, '\0' );
+  //   clGetProgramBuildInfo( program, device_id, CL_PROGRAM_BUILD_LOG, log_size, log.data(), NULL );
+  //   util::strip( log );
+  //   if ( !log.empty() )
+  //     util::print( log );
+  // }
+
   kernel = clCreateKernel( program, entry_point, &error );
   check_error( error, "clCreateKernel" );
 
@@ -238,6 +250,13 @@ void gpu_t::set_arg( cl_uint arg_index, size_t buffer_index )
   }
 
   cl_mem buffer = indexed_buffers[ current_buffer_index ][ buffer_index ];
+  set_arg( arg_index, buffer );
+}
+
+void gpu_t::add_constant_arg( cl_uint arg_index, const void* data, size_t size, cl_mem_flags flags )
+{
+  cl_mem buffer = add_buffer( size, flags );
+  write_buffer( buffer, data, size );
   set_arg( arg_index, buffer );
 }
 

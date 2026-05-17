@@ -3,13 +3,11 @@
 // LETTERS: the alphabet to use
 // STR: the initial bytes of the string fragment that will be hashed
 //      each global id will permute this to a different value
-// LEN: length of the string for hashlittle2 to compute up to the start of the final block
-//      the real length of the string will be LEN + 12 including the final block
+// LEN: length of the string to hash
 // NUM_INDICES: the number of wildcards that need to be permuted over in the string
 // NUM_INDICES2: the number of wildcards that mirror the first set in the string
 // INDICES: the string offset for each wildcard
 // INDICES2: the string offset for each wildcard that mirrors the first set
-// A, B, C: initial state for hashlittle2
 // NUM_HASHES: the size of the bucketed array of hashes
 // BUCKET_SIZE: the number of hashes in each bucket
 // MAX_RESULTS: the maximum number of results that are allowed
@@ -31,51 +29,34 @@ constant size_t indices2[ NUM_INDICES2 ] = { INDICES2 };
 constant size_t indices2[ 1 ] = { 0 };
 #endif
 
-inline uint32_t rotate_left( uint32_t value, size_t distance )
-{
-  return ( value << distance ) | ( value >> ( 32 - distance ) );
-}
+constant uint32_t const s_hashtable[ 16 ] = {
+  0x486e26ee, 0xdcaa16b3, 0xe1918eef, 0x202dafdb,
+  0x341c7dc7, 0x1c365303, 0x40ef2d37, 0x65fd5e49,
+  0xd6057177, 0x904ece93, 0x1c38024f, 0x98fd323b,
+  0xe3061ae7, 0xa39b0fa1, 0x9797f25f, 0xe4444563,
+};
 
-inline uint64_t hashlittle2( unsigned char* k )
+inline uint32_t s_str_hash( unsigned char* str )
 {
-  uint32_t a = A;
-  uint32_t b = B;
-  uint32_t c = C;
+  uint32_t seed = A;
+  uint32_t shift = B;
 
-  for ( short i = 0; i < LEN; i += 12 )
+  for ( short i = 0; i < LEN; i++ )
   {
-    a += k[ i + 0 ] + ( ( uint32_t )( k[ i + 1 ] ) << 8 ) + ( ( uint32_t )( k[ i +  2 ] ) << 16 ) + ( ( uint32_t )( k[ i +  3 ] ) << 24 );
-    b += k[ i + 4 ] + ( ( uint32_t )( k[ i + 5 ] ) << 8 ) + ( ( uint32_t )( k[ i +  6 ] ) << 16 ) + ( ( uint32_t )( k[ i +  7 ] ) << 24 );
-    c += k[ i + 8 ] + ( ( uint32_t )( k[ i + 9 ] ) << 8 ) + ( ( uint32_t )( k[ i + 10 ] ) << 16 ) + ( ( uint32_t )( k[ i + 11 ] ) << 24 );
-    a -= c; a ^= rotate_left( c,  4 ); c += b;
-    b -= a; b ^= rotate_left( a,  6 ); a += c;
-    c -= b; c ^= rotate_left( b,  8 ); b += a;
-    a -= c; a ^= rotate_left( c, 16 ); c += b;
-    b -= a; b ^= rotate_left( a, 19 ); a += c;
-    c -= b; c ^= rotate_left( b,  4 ); b += a;
+    seed = ( s_hashtable[ str[ i ] >> 4 ] - s_hashtable[ str[ i ] & 0xf ] ) ^ ( shift + seed );
+    shift = str[ i ] + seed + 33 * shift + 3;
   }
 
-  a += k[ LEN + 0 ] + ( ( uint32_t )( k[ LEN + 1 ] ) << 8 ) + ( ( uint32_t )( k[ LEN +  2 ] ) << 16 ) + ( ( uint32_t )( k[ LEN +  3 ] ) << 24 );
-  b += k[ LEN + 4 ] + ( ( uint32_t )( k[ LEN + 5 ] ) << 8 ) + ( ( uint32_t )( k[ LEN +  6 ] ) << 16 ) + ( ( uint32_t )( k[ LEN +  7 ] ) << 24 );
-  c += k[ LEN + 8 ] + ( ( uint32_t )( k[ LEN + 9 ] ) << 8 ) + ( ( uint32_t )( k[ LEN + 10 ] ) << 16 ) + ( ( uint32_t )( k[ LEN + 11 ] ) << 24 );
-
-  c ^= b; c -= rotate_left( b, 14 );
-  a ^= c; a -= rotate_left( c, 11 );
-  b ^= a; b -= rotate_left( a, 25 );
-  c ^= b; c -= rotate_left( b, 16 );
-  a ^= c; a -= rotate_left( c,  4 );
-  b ^= a; b -= rotate_left( a, 14 );
-  c ^= b; c -= rotate_left( b, 24 );
-
-  return ( ( uint64_t )( c ) << 32 ) | b;
+  return seed ? seed : 1;
 }
+
 
 kernel void bruteforce( global size_t* initial_counts, global uint* num_results, global size_t* result_id, global uint64_t* hashes )
 {
   size_t id = get_global_id( 0 );
 
   // initialize the string
-  unsigned char str[ LEN + 12 ] = { STR };
+  unsigned char str[ LEN ] = { STR };
   size_t count = id;
   unsigned char letter;
   for ( size_t i = 0; i < NUM_INDICES; i++ )
@@ -89,7 +70,7 @@ kernel void bruteforce( global size_t* initial_counts, global uint* num_results,
   }
 
   // hash the string and check for matches
-  uint64_t hash = hashlittle2( str );
+  uint64_t hash = s_str_hash( str );
   size_t bucket_index = ( hash & BUCKET_MASK ) * BUCKET_SIZE;
   bool match = false;
   for ( size_t i = 0; i < BUCKET_SIZE; i++ )

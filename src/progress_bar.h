@@ -25,6 +25,9 @@ struct progress_bar_t
 
   ~progress_bar_t()
   {
+    if ( total_combinations == 0 )
+      return;
+
     std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
     size_t elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>( now - begin ).count();
     size_t elapsed_seconds = std::chrono::duration_cast<std::chrono::seconds>( now - begin ).count();

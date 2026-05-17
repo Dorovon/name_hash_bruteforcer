@@ -1,10 +1,12 @@
 #include "gpu.h"
 #include "hash_string.h"
 #include "hashlittle2.h"
+#include "sstrhash.h"
 #include "kernels.h"
 #include "progress_bar.h"
 #include "util.h"
 
+#include <array>
 #include <chrono>
 #include <format>
 #include <memory>
@@ -16,33 +18,29 @@
 #include <unordered_map>
 #include <vector>
 
-static std::string LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- ";
-static size_t LETTERS_SIZE = LETTERS.size();
+static unsigned char LETTERS[ 256 ] = { 0 };
+static size_t LETTERS_SIZE = 0;
+static std::string LISTFILE_PATH = "";
 static const char* PROGRAM_NAME = "bruteforcer";
 static size_t GPU_BATCH_MAX_RESULTS = 1024;
 static size_t GPU_MAX_WORK_SIZE = 2ull << 30;
-constexpr size_t NUM_GPU_BUFFERS = 2;
+static std::string PATTERN_PATH = "";
+static std::string NAME_HASH_STR = "";
+static std::vector<std::string> PATTERNS;
+static std::vector<std::vector<unsigned char>> ALPHABETS;
+static int NUM_THREADS = 1;
+static bool USE_GPU = false;
+static bool QUIET = false;
+static size_t HASH_TYPE = H_HASHLITTLE2;
 
-enum gpu_pattern_buffers : size_t
-{
-  B_INITIAL_COUNTS = 0,
-  B_NUM_RESULTS = 1,
-  B_RESULTS = 2,
-};
-
-void print_match( std::string_view original_pattern, std::string_view match, uint32_t file_data_id = 0 )
+void print_match( std::string_view match, uint32_t file_data_id = 0 )
 {
   std::string s;
   if ( file_data_id > 0 )
     s += std::format( "{};", file_data_id );
   s.reserve( s.size() + match.size() );
   for ( size_t i = 0; i < match.size(); i++ )
-  {
-    if ( i < original_pattern.size() && original_pattern[ i ] != '*' && original_pattern[ i ] != '%' )
-      s += original_pattern[ i ];
-    else
-      s += util::to_lower( match[ i ] );
-  }
+    s += match[ i ];
   util::print_green( s );
 }
 
@@ -73,25 +71,81 @@ bool next_combination( std::vector<size_t>& counts, size_t increment = 1 )
   return true;
 }
 
-std::string_view get_alphabet( std::string_view str )
+inline uint64_t compute_hash( hash_string_t& str )
 {
-  if ( str == "default" )
-    return "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
-  else if ( str == "digits" || str == "numbers" )
-    return "0123456789";
-  else if ( str == "letters" )
-    return "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  else if ( str == "hex" )
-    return "0123456789ABCDEF";
+  switch ( HASH_TYPE )
+  {
+    case H_HASHLITTLE2:
+      return hashlittle2( str );
+    case H_SSTRHASH:
+      return s_str_hash( str );
+    default:
+      util::error( "Invalid hash type {}", HASH_TYPE );
+      std::exit( 1 );
+  }
+}
 
-  return str;
+constexpr const unsigned char LETTERS_DEFAULT[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- ";
+constexpr const unsigned char LETTERS_DIGITS[] = "0123456789";
+constexpr const unsigned char LETTERS_LETTERS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+constexpr const unsigned char LETTERS_HEX[] = "0123456789ABCDEF";
+constexpr const unsigned char LETTERS_BYTES[] = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F"
+                                                "\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F"
+                                                "\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2A\x2B\x2C\x2D\x2E\x2F"
+                                                "\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3A\x3B\x3C\x3D\x3E\x3F"
+                                                "\x40\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4A\x4B\x4C\x4D\x4E\x4F"
+                                                "\x50\x51\x52\x53\x54\x55\x56\x57\x58\x59\x5A\x5B\x5C\x5D\x5E\x5F"
+                                                "\x60\x61\x62\x63\x64\x65\x66\x67\x68\x69\x6A\x6B\x6C\x6D\x6E\x6F"
+                                                "\x70\x71\x72\x73\x74\x75\x76\x77\x78\x79\x7A\x7B\x7C\x7D\x7E\x7F"
+                                                "\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8A\x8B\x8C\x8D\x8E\x8F"
+                                                "\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9A\x9B\x9C\x9D\x9E\x9F"
+                                                "\xA0\xA1\xA2\xA3\xA4\xA5\xA6\xA7\xA8\xA9\xAA\xAB\xAC\xAD\xAE\xAF"
+                                                "\xB0\xB1\xB2\xB3\xB4\xB5\xB6\xB7\xB8\xB9\xBA\xBB\xBC\xBD\xBE\xBF"
+                                                "\xC0\xC1\xC2\xC3\xC4\xC5\xC6\xC7\xC8\xC9\xCA\xCB\xCC\xCD\xCE\xCF"
+                                                "\xD0\xD1\xD2\xD3\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF"
+                                                "\xE0\xE1\xE2\xE3\xE4\xE5\xE6\xE7\xE8\xE9\xEA\xEB\xEC\xED\xEE\xEF"
+                                                "\xF0\xF1\xF2\xF3\xF4\xF5\xF6\xF7\xF8\xF9\xFA\xFB\xFC\xFD\xFE\xFF";
+
+void set_alphabet( std::vector<unsigned char>& a )
+{
+  std::memcpy( LETTERS, a.data(), a.size() );
+  LETTERS_SIZE = a.size();
 }
 
 void set_alphabet( std::string_view str )
 {
-  LETTERS = get_alphabet( str );
-  LETTERS_SIZE = LETTERS.size();
-  util::to_upper( LETTERS );
+  if ( str == "default" )
+  {
+    LETTERS_SIZE = 39;
+    std::memcpy( LETTERS, LETTERS_DEFAULT, LETTERS_SIZE );
+  }
+  else if ( str == "digits" || str == "numbers" )
+  {
+    LETTERS_SIZE = 10;
+    std::memcpy( LETTERS, LETTERS_DIGITS, LETTERS_SIZE );
+  }
+  else if ( str == "letters" )
+  {
+    LETTERS_SIZE = 26;
+    std::memcpy( LETTERS, LETTERS_LETTERS, LETTERS_SIZE );
+  }
+  else if ( str == "hex" )
+  {
+    LETTERS_SIZE = 16;
+    std::memcpy( LETTERS, LETTERS_HEX, LETTERS_SIZE );
+  }
+  else if ( str == "bytes" )
+  {
+    LETTERS_SIZE = 256;
+    std::memcpy( LETTERS, LETTERS_BYTES, LETTERS_SIZE );
+  }
+  else
+  {
+    std::memcpy( LETTERS, str.data(), str.size() );
+    LETTERS_SIZE = str.size();
+    for ( size_t i = 0; i < LETTERS_SIZE; i++ )
+      LETTERS[ i ] = util::to_upper( LETTERS[ i ] );
+  }
 }
 
 std::string usage_message()
@@ -106,6 +160,7 @@ std::string usage_message()
                       "[-w gpu_batch_work_size] "
                       "[-m gpu_match_buffer] "
                       "[-q] "
+                      "[-t] "
                       "[-?]", PROGRAM_NAME );
 }
 
@@ -132,6 +187,7 @@ void print_help()
                "  -w  set the batch work size for the GPU\n"
                "  -m  set the maximum number of matches for a single GPU batch\n"
                "  -q  suppress unnecessary output\n"
+               "  -t  calculate a table hash instead\n"
                "  -?  display this message and exit\n" );
   std::exit( 0 );
 }
@@ -144,7 +200,7 @@ void exit_usage( std::string_view str = "" )
   std::exit( 1 );
 }
 
-int main( int argc, char** argv )
+void read_args( int argc, char** argv )
 {
   int arg_index = 0;
   auto get_next_arg = [ & ]()
@@ -155,14 +211,6 @@ int main( int argc, char** argv )
     return argv[ arg_index++ ];
   };
 
-  std::string listfile_path = "";
-  std::string pattern_path = "";
-  std::string name_hash_str = "";
-  std::vector<std::string> patterns;
-  std::vector<std::string> alphabets;
-  int NUM_THREADS = std::thread::hardware_concurrency();
-  bool use_gpu = false;
-  bool quiet = false;
   PROGRAM_NAME = get_next_arg();
   const char* current_arg;
   while ( arg_index < argc )
@@ -191,23 +239,23 @@ int main( int argc, char** argv )
         break;
       }
       case 'l':
-        listfile_path = get_next_arg();
+        LISTFILE_PATH = get_next_arg();
         break;
       case 'n':
-        name_hash_str = get_next_arg();
+        NAME_HASH_STR = get_next_arg();
         break;
       case 'p':
-        patterns.push_back( get_next_arg() );
+        PATTERNS.push_back( get_next_arg() );
         break;
       case 'f':
-        pattern_path = get_next_arg();
+        PATTERN_PATH = get_next_arg();
         break;
       case '?':
         print_help();
         break;
       case 'g':
       {
-        use_gpu = true;
+        USE_GPU = true;
         break;
       }
       case 'w':
@@ -227,60 +275,76 @@ int main( int argc, char** argv )
         break;
       }
       case 'q':
-        quiet = true;
+        QUIET = true;
+        break;
+      case 't':
+        HASH_TYPE = H_SSTRHASH;
         break;
       default:
         exit_usage( std::format( "Error: Unsupported argument: {}", current_arg ) );
     }
   }
 
-  while ( alphabets.size() < patterns.size() )
-    alphabets.push_back( LETTERS );
+  if ( LETTERS_SIZE == 0 )
+    set_alphabet( "default" );
 
-  if ( name_hash_str.empty() )
+  while ( ALPHABETS.size() < PATTERNS.size() )
+    ALPHABETS.emplace_back( std::begin( LETTERS ), std::begin( LETTERS ) + LETTERS_SIZE );
+
+  if ( NAME_HASH_STR.empty() )
     exit_usage();
+}
 
-  // read listfile if given
-  std::string listfile_data;
+std::unordered_map<uint32_t, std::string_view> read_listfile( const std::string& path )
+{
+  if ( path.empty() )
+    return {};
+
   std::unordered_map<uint32_t, std::string_view> listfile;
-  if ( !listfile_path.empty() )
+  std::string listfile_data = util::read_text_file( path );
+  util::read_lines( listfile_data, [ & ]( std::string_view line )
   {
-    listfile_data = util::read_text_file( listfile_path );
-    util::read_lines( listfile_data, [ & ]( std::string_view line )
+    auto splits = util::string_split( line, ";" );
+    if ( splits.size() >= 2 )
+      listfile[ std::stoul( std::string( splits[ 0 ] ) ) ] = splits[ 1 ];
+  } );
+
+  return listfile;
+}
+
+void read_pattern_file()
+{
+  if ( PATTERN_PATH.empty() )
+    return;
+
+  std::string pattern_data = util::read_text_file( PATTERN_PATH );
+  util::read_lines( pattern_data, [ & ]( std::string_view line )
+  {
+    if ( !line.empty() && line[ 0 ] != '#' )
     {
       auto splits = util::string_split( line, ";" );
-      if ( splits.size() >= 2 )
-        listfile[ std::stoul( std::string( splits[ 0 ] ) ) ] = splits[ 1 ];
-    } );
-  }
+      PATTERNS.push_back( std::string( splits[ 0 ] ) );
+      if ( splits.size() == 2 )
+        set_alphabet( splits[ 1 ] );
+      else
+        set_alphabet( "default" );
+      ALPHABETS.emplace_back( std::begin( LETTERS ), std::begin( LETTERS ) + LETTERS_SIZE );
+    }
+  } );
+}
 
-  // read patterns from file if given
-  if ( !pattern_path.empty() )
-  {
-    std::string pattern_data = util::read_text_file( pattern_path );
-    util::read_lines( pattern_data, [ & ]( std::string_view line )
-    {
-      if ( !line.empty() && line[ 0 ] != '#' )
-      {
-        auto splits = util::string_split( line, ";" );
-        patterns.push_back( std::string( splits[ 0 ] ) );
-        if ( splits.size() == 2 )
-          alphabets.push_back( std::string( splits[ 1 ] ) );
-        else
-          alphabets.push_back( LETTERS );
-      }
-    } );
-  }
-
-  // read name hashes
+std::unordered_map<uint64_t, uint32_t> read_name_hashes( const std::string& hash_str,
+                                                         const std::unordered_map<uint32_t, std::string_view>& listfile )
+{
   std::unordered_map<uint64_t, uint32_t> name_hashes;
+
   try
   {
-    name_hashes[ std::stoull( name_hash_str, nullptr, 16 ) ] = 0;
+    name_hashes[ std::stoull( hash_str, nullptr, 16 ) ] = 0;
   }
   catch ( std::exception& )
   {
-    std::string name_hash_data = util::read_text_file( name_hash_str );
+    std::string name_hash_data = util::read_text_file( hash_str );
     util::read_lines( name_hash_data, [ & ]( std::string_view line )
     {
       auto splits = util::string_split( line, ";" );
@@ -292,8 +356,8 @@ int main( int argc, char** argv )
         bool known = false;
         if ( it != listfile.end() )
         {
-          hash_string_t filename{ it->second };
-          if ( name_hash == hashlittle2( filename ) )
+          hash_string_t filename{ it->second, HASH_TYPE };
+          if ( name_hash == compute_hash( filename ) )
             known = true;
         }
         if ( !known )
@@ -306,79 +370,249 @@ int main( int argc, char** argv )
   if ( name_hashes.empty() )
     exit_usage( "Error: at least one name hash must be provided" );
 
-  if ( patterns.empty() )
+  return name_hashes;
+}
+
+void match_with_just_listfile( const std::unordered_map<uint32_t, std::string_view>& listfile,
+                               const std::unordered_map<uint64_t, uint32_t>& name_hashes )
+{
+  if ( listfile.empty() )
+    exit_usage( "Error: either a listfile or pattern must be provided" );
+
+  std::set<std::string_view, decltype( util::str_lt_ci )*> path_names( util::str_lt_ci );
+  std::set<std::string_view, decltype( util::str_lt_ci )*> base_names( util::str_lt_ci );
+  size_t num_paths = 0;
+  size_t num_base = 0;
+  for ( auto& [ file_data_id, name ] : listfile )
   {
-    // Look for matches using names from the listfile
-    if ( listfile.empty() )
-      exit_usage( "Error: either a listfile or pattern must be provided" );
-
-    std::set<std::string_view, decltype( util::str_lt_ci )*> path_names( util::str_lt_ci );
-    std::set<std::string_view, decltype( util::str_lt_ci )*> base_names( util::str_lt_ci );
-    size_t num_paths = 0;
-    size_t num_base = 0;
-    for ( auto& [ file_data_id, name ] : listfile )
+    // check if prepending the hash with some specific directories finds anything
+    for ( auto prefix : { "Data/", "Alternate/", "Test/" } )
     {
-      // check if prepending the hash with some specific directories finds anything
-      for ( auto prefix : { "Data/", "Alternate/", "Test/" } )
-      {
-        hash_string_t data_name{ prefix + std::string( name ) };
-        auto match = name_hashes.find( hashlittle2( data_name ) );
-        if ( match != name_hashes.end() )
-          print_match( prefix + std::string( name ), data_name.as_string(), match->second );
-      }
-
-      for ( size_t i = name.size() - 1; i > 0; i-- )
-      {
-        if ( name[ i ] == '/' )
-        {
-          if ( path_names.insert( name.substr( 0, i ) ).second )
-            num_paths++;
-          if ( base_names.insert( name.substr( i + 1, name.size() - i - 1 ) ).second )
-            num_base++;
-          break;
-        }
-      }
+      hash_string_t data_name{ prefix + std::string( name ), HASH_TYPE };
+      auto match = name_hashes.find( compute_hash( data_name ) );
+      if ( match != name_hashes.end() )
+        print_match( data_name.as_string( prefix + std::string( name ) ), match->second );
     }
 
-    progress_bar_t progress_bar( static_cast<double>( num_paths ) * num_base );
-    std::vector<std::string_view> base_names_vec{ base_names.begin(), base_names.end() };
+    for ( size_t i = name.size() - 1; i > 0; i-- )
+    {
+      if ( name[ i ] == '/' )
+      {
+        if ( path_names.insert( name.substr( 0, i ) ).second )
+          num_paths++;
+        if ( base_names.insert( name.substr( i + 1, name.size() - i - 1 ) ).second )
+          num_base++;
+        break;
+      }
+    }
+  }
+
+  progress_bar_t progress_bar( static_cast<double>( num_paths ) * num_base );
+  std::vector<std::string_view> base_names_vec{ base_names.begin(), base_names.end() };
+  std::vector<std::thread> threads;
+  progress_bar.reset_threads();
+  for ( int i = 0; i < NUM_THREADS; i++ )
+  {
+    threads.emplace_back( [ & ]( int thread_index )
+    {
+      size_t update_count = 0;
+      for ( size_t b = thread_index; b < base_names_vec.size(); b += NUM_THREADS )
+      {
+        std::string current_name;
+        hash_string_t hash_name;
+        for ( auto path : path_names )
+        {
+          current_name = path;
+          current_name += "/";
+          current_name += base_names_vec[ b ];
+          hash_name = current_name;
+          auto match = name_hashes.find( compute_hash( hash_name ) );
+          if ( match != name_hashes.end() )
+            print_match( hash_name.as_string( current_name ), match->second );
+          if ( !QUIET )
+          {
+            update_count++;
+            if ( update_count > 10000 )
+            {
+              progress_bar.increment( update_count );
+              update_count = 0;
+            }
+          }
+        }
+      }
+      if ( !QUIET )
+        progress_bar.increment( update_count );
+      progress_bar.finish_thread();
+    }, i );
+  }
+  if ( !QUIET )
+  {
+    threads.emplace_back( [ & ]( int )
+    {
+      using namespace std::chrono_literals;
+      while ( !progress_bar.is_finished( NUM_THREADS ) )
+      {
+        progress_bar.out();
+        std::this_thread::sleep_for( 100ms );
+      }
+    }, NUM_THREADS );
+  }
+  for ( auto& thread : threads )
+    thread.join();
+  progress_bar.finish();
+}
+
+struct pattern_bruteforcer_t
+{
+  const std::unordered_map<uint64_t, uint32_t>& name_hashes;
+  progress_bar_t progress_bar;
+  static constexpr uint64_t bucket_mask = 0xffff;
+  static constexpr size_t num_gpu_buffers = 2;
+  size_t bucket_size = 0;
+  std::vector<uint64_t> bucket_hashes;
+  std::unique_ptr<gpu_pool_t> gpu_pool;
+  std::mutex gpu_mutex;
+
+  pattern_bruteforcer_t( const std::unordered_map<uint64_t, uint32_t>& name_hashes ) :
+    name_hashes( name_hashes ), progress_bar( 0 ), bucket_hashes(), gpu_pool(), gpu_mutex()
+  {
+    init_progress_bar();
+    init_gpus();
+  }
+
+  ~pattern_bruteforcer_t()
+  {
+    progress_bar.finish();
+  }
+
+  void init_progress_bar()
+  {
+    double total_combinations = 0;
+    for ( size_t i = 0; i < PATTERNS.size(); i++ )
+    {
+      double pattern_combinations = 1;
+      size_t size_1 = 0;
+      size_t size_2 = 0;
+      for ( size_t j = 0; j < PATTERNS[ i ].size(); j++ )
+      {
+        if ( PATTERNS[ i ][ j ] == '*' )
+          size_1++;
+        if ( PATTERNS[ i ][ j ] == '%' )
+          size_2++;
+      }
+      for ( size_t j = 0; j < size_1 || j < size_2; j++ )
+        pattern_combinations *= ALPHABETS[ i ].size();
+      total_combinations += pattern_combinations;
+    }
+
+    // TODO: Handle this in a better way.
+    std::destroy_at( &progress_bar );
+    std::construct_at( &progress_bar, total_combinations );
+  }
+
+  void init_gpus()
+  {
+    if ( !USE_GPU )
+      return;
+
+    gpu_pool = std::make_unique<gpu_pool_t>( num_gpu_buffers );
+    size_t bucket_counts[ bucket_mask + 1 ];
+    for ( size_t i = 0; i < bucket_mask + 1; i++ )
+      bucket_counts[ i ] = 0;
+    for ( auto [ hash, _ ] : name_hashes )
+      bucket_counts[ hash & bucket_mask ]++;
+    for ( auto b : bucket_counts )
+    {
+      if ( b > bucket_size )
+        bucket_size = b;
+    }
+    bucket_hashes.resize( bucket_size * bucket_mask + 1, 0 );
+    for ( auto [ hash, _ ] : name_hashes )
+    {
+      size_t bucket_index = hash & bucket_mask;
+      bucket_hashes[ bucket_size * bucket_index + bucket_counts[ bucket_index ] - 1 ] = hash;
+      bucket_counts[ bucket_index ]--;
+    }
+  }
+
+  void match_pattern( size_t pattern_index )
+  {
+    const auto& original_pattern = PATTERNS[ pattern_index ];
+    set_alphabet( ALPHABETS[ pattern_index ] );
+    hash_string_t current_string{ original_pattern, HASH_TYPE };
+    std::vector<size_t> indices;
+    std::vector<size_t> indices2;
+
+    for ( size_t i = 0; i < current_string.size; i++ )
+    {
+      if ( current_string[ i ] == '*' )
+        indices.push_back( i );
+      if ( current_string[ i ] == '%' )
+        indices2.push_back( i );
+    }
+    if ( indices2.size() > indices.size() )
+      std::swap( indices, indices2 );
+    std::vector<size_t> counts( indices.size(), 0 );
+
+    if ( counts.size() == 0 )
+    {
+      auto match = name_hashes.find( compute_hash( current_string ) );
+      if ( match != name_hashes.end() )
+        print_match( current_string.as_string( original_pattern ), match->second );
+      progress_bar.increment( 1 );
+      return;
+    }
+
+    if ( USE_GPU )
+      match_pattern_gpu( original_pattern, current_string, indices, indices2, counts );
+    else
+      match_pattern_cpu( original_pattern, indices, indices2, counts );
+  }
+
+  void match_pattern_cpu( const auto& original_pattern,
+                          std::vector<size_t>& indices,
+                          std::vector<size_t>& indices2,
+                          std::vector<size_t>& counts )
+  {
     std::vector<std::thread> threads;
     progress_bar.reset_threads();
     for ( int i = 0; i < NUM_THREADS; i++ )
     {
       threads.emplace_back( [ & ]( int thread_index )
       {
-        size_t update_count = 0;
-        for ( size_t b = thread_index; b < base_names_vec.size(); b += NUM_THREADS )
+        hash_string_t thread_string{ original_pattern, HASH_TYPE };
+        std::vector<size_t> thread_counts = counts;
+        if ( thread_index > 0 )
         {
-          std::string current_name;
-          hash_string_t hash_name;
-          for ( auto path : path_names )
+          if ( !next_combination( thread_counts, thread_index ) )
           {
-            current_name = path;
-            current_name += "/";
-            current_name += base_names_vec[ b ];
-            hash_name = current_name;
-            auto match = name_hashes.find( hashlittle2( hash_name ) );
-            if ( match != name_hashes.end() )
-              print_match( current_name, hash_name.as_string(), match->second );
-            if ( !quiet )
-            {
-              update_count++;
-              if ( update_count > 10000 )
-              {
-                progress_bar.increment( update_count );
-                update_count = 0;
-              }
-            }
+            progress_bar.finish_thread();
+            return;
           }
         }
-        if ( !quiet )
+        size_t update_count = 0;
+        do
+        {
+          get_combination( thread_string, thread_counts, indices, indices2 );
+          auto match = name_hashes.find( compute_hash( thread_string ) );
+          if ( match != name_hashes.end() )
+            print_match( thread_string.as_string( original_pattern ), match->second );
+          if ( !QUIET )
+          {
+            update_count++;
+            if ( update_count > 10000 )
+            {
+              progress_bar.increment( update_count );
+              update_count = 0;
+            }
+          }
+        } while ( next_combination( thread_counts, NUM_THREADS ) );
+        if ( !QUIET )
           progress_bar.increment( update_count );
         progress_bar.finish_thread();
       }, i );
     }
-    if ( !quiet )
+    if ( !QUIET )
     {
       threads.emplace_back( [ & ]( int )
       {
@@ -392,268 +626,196 @@ int main( int argc, char** argv )
     }
     for ( auto& thread : threads )
       thread.join();
-    progress_bar.finish();
   }
-  else
+
+  void match_pattern_gpu( const auto& original_pattern,
+                          hash_string_t& current_string,
+                          std::vector<size_t>& indices,
+                          std::vector<size_t>& indices2,
+                          std::vector<size_t>& counts )
   {
-    // look for matches using the provided pattern(s)
-    double total_combinations = 0;
-    for ( size_t i = 0; i < patterns.size(); i++ )
+    enum gpu_pattern_buffers : size_t
     {
-      double pattern_combinations = 1;
-      size_t size_1 = 0;
-      size_t size_2 = 0;
-      for ( size_t j = 0; j < patterns[ i ].size(); j++ )
-      {
-        if ( patterns[ i ][ j ] == '*' )
-          size_1++;
-        if ( patterns[ i ][ j ] == '%' )
-          size_2++;
-      }
-      for ( size_t j = 0; j < size_1 || j < size_2; j++ )
-        pattern_combinations *= get_alphabet( alphabets[ i ] ).size();
-      total_combinations += pattern_combinations;
+      B_INITIAL_COUNTS = 0,
+      B_NUM_RESULTS = 1,
+      B_RESULTS = 2,
+      B_HASHES = 3,
+    };
+
+    // Prepare the source code for the kernel.
+    std::string defines;
+    defines += std::format( "#define NUM_LETTERS {}\n", LETTERS_SIZE );
+    defines += "#define LETTERS {";
+    for ( size_t i = 0; i < LETTERS_SIZE; i++ )
+    {
+      if ( i != 0 )
+        defines += ",";
+      defines += std::to_string( static_cast<unsigned int>( LETTERS[ i ] ) );
     }
-    progress_bar_t progress_bar( total_combinations );
-
-    constexpr uint64_t bucket_mask = 0xffff;
-    size_t bucket_size = 0;
-    std::vector<uint64_t> bucket_hashes;
-    std::unique_ptr<gpu_pool_t> gpu_pool;
-    std::mutex gpu_mutex;
-    if ( use_gpu )
+    defines += "}\n";
+    defines += "#define STR ";
+    if ( HASH_TYPE == H_HASHLITTLE2 )
     {
-      gpu_pool = std::make_unique<gpu_pool_t>( NUM_GPU_BUFFERS );
-      size_t bucket_counts[ bucket_mask + 1 ];
-      for ( size_t i = 0; i < bucket_mask + 1; i++ )
-        bucket_counts[ i ] = 0;
-      for ( auto [ hash, _ ] : name_hashes )
-        bucket_counts[ hash & bucket_mask ]++;
-      for ( auto b : bucket_counts )
+      for ( size_t i = current_string.offset; i < current_string.data_size; i++ )
       {
-        if ( b > bucket_size )
-          bucket_size = b;
+        if ( i != current_string.offset )
+          defines += ",";
+        defines += std::to_string( static_cast<unsigned int>( current_string[ i ] ) );
       }
-      bucket_hashes.resize( bucket_size * bucket_mask + 1, 0 );
-      for ( auto [ hash, _ ] : name_hashes )
-      {
-        size_t bucket_index = hash & bucket_mask;
-        bucket_hashes[ bucket_size * bucket_index + bucket_counts[ bucket_index ] - 1 ] = hash;
-        bucket_counts[ bucket_index ]--;
-      }
+      defines += "\n";
+      defines += std::format( "#define LEN {}\n", current_string.data_size - current_string.offset - 12 );
     }
-
-    for ( size_t pattern_index = 0; pattern_index < patterns.size(); pattern_index++ )
+    else
     {
-      const auto& original_pattern = patterns[ pattern_index ];
-      set_alphabet( alphabets[ pattern_index ] );
-      hash_string_t current_string{ original_pattern };
-      std::vector<size_t> indices;
-      std::vector<size_t> indices2;
-
-      for ( size_t i = 0; i < current_string.size; i++ )
+      for ( size_t i = current_string.offset; i < current_string.size; i++ )
       {
-        if ( current_string[ i ] == '*' )
-          indices.push_back( i );
-        if ( current_string[ i ] == '%' )
-          indices2.push_back( i );
+        if ( i != current_string.offset )
+          defines += ",";
+        defines += std::to_string( static_cast<unsigned int>( current_string[ i ] ) );
       }
-      if ( indices2.size() > indices.size() )
-        std::swap( indices, indices2 );
-      std::vector<size_t> counts( indices.size(), 0 );
-
-      if ( counts.size() == 0 )
-      {
-        auto match = name_hashes.find( hashlittle2( current_string ) );
-        if ( match != name_hashes.end() )
-          print_match( original_pattern, current_string.as_string(), match->second );
-        progress_bar.increment( 1 );
-        continue;
-      }
-
-      if ( use_gpu )
-      {
-        // Prepare the source code for the kernel.
-        std::string defines;
-        defines += std::format( "#define NUM_LETTERS {}\n", LETTERS_SIZE );
-        defines += std::format( "#define LETTERS \"{}\"\n", LETTERS );
-        defines += "#define STR ";
-        for ( size_t i = current_string.offset; i < current_string.data_size; i++ )
-        {
-          if ( i != current_string.offset )
-            defines += ",";
-          defines += std::to_string( static_cast<unsigned int>( current_string[ i ] ) );
-        }
-        defines += "\n";
-        defines += std::format( "#define LEN {}\n", current_string.data_size - current_string.offset - 12 );
-        defines += std::format( "#define NUM_INDICES {}\n", indices.size() );
-        defines += std::format( "#define NUM_INDICES2 {}\n", indices2.size() );
-        defines += "#define INDICES ";
-        for ( size_t i = 0; i < indices.size(); i++ )
-        {
-          if ( i != 0 )
-            defines += ",";
-          defines += std::to_string( indices[ i ] - current_string.offset );
-        }
-        defines += "\n";
-        defines += "#define INDICES2 ";
-        for ( size_t i = 0; i < indices2.size(); i++ )
-        {
-          if ( i != 0 )
-            defines += ",";
-          defines += std::to_string( indices2[ i ] - current_string.offset );
-        }
-        defines += "\n";
-        defines += std::format( "#define A {}\n", current_string.a );
-        defines += std::format( "#define B {}\n", current_string.b );
-        defines += std::format( "#define C {}\n", current_string.c );
-        defines += std::format( "#define BUCKET_MASK {}\n", bucket_mask );
-        defines += std::format( "#define NUM_HASHES {}\n", bucket_hashes.size() );
-        defines += std::format( "#define BUCKET_SIZE {}\n", bucket_size );
-        defines += std::format( "#define MAX_RESULTS {}\n", GPU_BATCH_MAX_RESULTS );
-        std::vector<const char*> source;
-        source.push_back( defines.c_str() );
+      defines += "\n";
+      defines += std::format( "#define LEN {}\n", current_string.size - current_string.offset );
+    }
+    defines += std::format( "#define NUM_INDICES {}\n", indices.size() );
+    defines += std::format( "#define NUM_INDICES2 {}\n", indices2.size() );
+    defines += "#define INDICES ";
+    for ( size_t i = 0; i < indices.size(); i++ )
+    {
+      if ( i != 0 )
+        defines += ",";
+      defines += std::to_string( indices[ i ] - current_string.offset );
+    }
+    defines += "\n";
+    defines += "#define INDICES2 ";
+    for ( size_t i = 0; i < indices2.size(); i++ )
+    {
+      if ( i != 0 )
+        defines += ",";
+      defines += std::to_string( indices2[ i ] - current_string.offset );
+    }
+    defines += "\n";
+    defines += std::format( "#define A {}\n", current_string.a );
+    defines += std::format( "#define B {}\n", current_string.b );
+    defines += std::format( "#define C {}\n", current_string.c );
+    defines += std::format( "#define BUCKET_MASK {}\n", bucket_mask );
+    defines += std::format( "#define NUM_HASHES {}\n", bucket_hashes.size() );
+    defines += std::format( "#define BUCKET_SIZE {}\n", bucket_size );
+    defines += std::format( "#define MAX_RESULTS {}\n", GPU_BATCH_MAX_RESULTS );
+    std::vector<const char*> source;
+    source.push_back( defines.c_str() );
+    switch ( HASH_TYPE )
+    {
+      case H_HASHLITTLE2:
         source.push_back( kernels::hashlittle2 );
-
-        size_t total_work = 1;
-        for ( size_t i = 0; i < indices.size(); i++ )
-          total_work *= LETTERS_SIZE;
-        size_t remaining_work = total_work;
-
-        gpu_pool->init_gpus( source, "bruteforce" );
-
-        gpu_pool->set_fn_init_shared_buffers( [ & ]( gpu_t& gpu )
-        {
-          cl_mem hash_buffer = gpu.add_buffer( bucket_hashes.size() * sizeof( uint64_t ) );
-          gpu.write_buffer( hash_buffer, bucket_hashes.data(), bucket_hashes.size() * sizeof( uint64_t ) );
-          gpu.set_arg( 3, hash_buffer );
-        });
-
-        gpu_pool->set_fn_init_device_buffers( [ & ]( gpu_t& gpu )
-        {
-          gpu.add_indexed_buffer<size_t>( B_INITIAL_COUNTS, counts.size() );
-          gpu.add_indexed_buffer<cl_uint>( B_NUM_RESULTS, 1 );
-          gpu.add_indexed_buffer<size_t>( B_RESULTS, GPU_BATCH_MAX_RESULTS );
-        });
-
-        constexpr cl_uint zero = 0;
-        gpu_pool->set_fn_prepare_batch( [ & ]( gpu_t& gpu )
-        {
-          std::lock_guard<std::mutex> guard( gpu_mutex );
-          gpu.write_indexed_buffer( B_INITIAL_COUNTS, counts.data() );
-          gpu.write_indexed_buffer( B_NUM_RESULTS, &zero );
-          gpu.set_arg( 0, B_INITIAL_COUNTS );
-          gpu.set_arg( 1, B_NUM_RESULTS );
-          gpu.set_arg( 2, B_RESULTS );
-          size_t this_work_size = ( remaining_work < GPU_MAX_WORK_SIZE ) ? remaining_work : GPU_MAX_WORK_SIZE;
-          remaining_work -= this_work_size;
-          gpu.set_next_work_size( this_work_size );
-          return next_combination( counts, GPU_MAX_WORK_SIZE );
-        });
-
-        gpu_pool->set_fn_execute_batch( [ & ]( gpu_t& gpu )
-        {
-          gpu.execute();
-          gpu.read_buffer( B_NUM_RESULTS );
-          gpu.read_buffer( B_RESULTS );
-        });
-
-        gpu_pool->set_fn_batch_results( [ & ]( gpu_t& gpu )
-        {
-          std::lock_guard<std::mutex> guard( gpu_mutex );
-          std::vector<size_t> temp_counts = counts;
-          cl_uint num_results = gpu.get_host_buffer<cl_uint>( B_NUM_RESULTS )[ 0 ];
-          const size_t* results = gpu.get_host_buffer<size_t>( B_RESULTS );
-          const size_t* batch_counts = gpu.get_host_buffer<size_t>( B_INITIAL_COUNTS );
-          if ( num_results > GPU_BATCH_MAX_RESULTS )
-            util::error( "Warning: GPU batch exceeded the maximum number of allowed results ({} > {}). Consider using the \"-m\" option to see them all.", num_results, GPU_BATCH_MAX_RESULTS );
-          for ( size_t i = 0; i < num_results && i < GPU_BATCH_MAX_RESULTS; i++ )
-          {
-            for ( size_t c = 0; c < counts.size(); c++ )
-              temp_counts[ c ] = batch_counts[ c ];
-            if ( next_combination( temp_counts, results[ i ] ) )
-            {
-              get_combination( current_string, temp_counts, indices, indices2 );
-              uint64_t hash = hashlittle2( current_string );
-              auto match = name_hashes.find( hash );
-              if ( match != name_hashes.end() )
-                print_match( original_pattern, current_string.as_string(), match->second );
-              else if ( hash != 0 ) // zeros are used to fill in the buckets, so this isn't a false positive worth warning about
-                util::error( "Error: GPU result did not match on CPU ({}): {}", results[ i ], current_string.as_string() );
-            }
-            else
-            {
-              util::error( "Error: GPU result is out of range ({})", results[ i ] );
-            }
-          }
-          if ( !quiet )
-          {
-            progress_bar.increment( gpu.get_last_work_size() );
-            progress_bar.out();
-          }
-        });
-
-        gpu_pool->execute();
-      }
-      else
-      {
-        // check pattern using CPU
-        std::vector<std::thread> threads;
-        progress_bar.reset_threads();
-        for ( int i = 0; i < NUM_THREADS; i++ )
-        {
-          threads.emplace_back( [ & ]( int thread_index )
-          {
-            hash_string_t thread_string{ original_pattern };
-            std::vector<size_t> thread_counts = counts;
-            if ( thread_index > 0 )
-            {
-              if ( !next_combination( thread_counts, thread_index ) )
-              {
-                progress_bar.finish_thread();
-                return;
-              }
-            }
-            size_t update_count = 0;
-            do
-            {
-              get_combination( thread_string, thread_counts, indices, indices2 );
-              auto match = name_hashes.find( hashlittle2( thread_string ) );
-              if ( match != name_hashes.end() )
-                print_match( original_pattern, thread_string.as_string(), match->second );
-              if ( !quiet )
-              {
-                update_count++;
-                if ( update_count > 10000 )
-                {
-                  progress_bar.increment( update_count );
-                  update_count = 0;
-                }
-              }
-            } while ( next_combination( thread_counts, NUM_THREADS ) );
-            if ( !quiet )
-              progress_bar.increment( update_count );
-            progress_bar.finish_thread();
-          }, i );
-        }
-        if ( !quiet )
-        {
-          threads.emplace_back( [ & ]( int )
-          {
-            using namespace std::chrono_literals;
-            while ( !progress_bar.is_finished( NUM_THREADS ) )
-            {
-              progress_bar.out();
-              std::this_thread::sleep_for( 100ms );
-            }
-          }, NUM_THREADS );
-        }
-        for ( auto& thread : threads )
-          thread.join();
-      }
+        break;
+      case H_SSTRHASH:
+        source.push_back( kernels::sstrhash );
+        break;
+      default:
+        break;
     }
-    progress_bar.finish();
+
+    size_t total_work = 1;
+    for ( size_t i = 0; i < indices.size(); i++ )
+      total_work *= LETTERS_SIZE;
+    size_t remaining_work = total_work;
+
+    gpu_pool->init_gpus( source, "bruteforce" );
+
+    // constant buffers used by every device
+    gpu_pool->set_fn_init_shared_buffers( [ & ]( gpu_t& gpu )
+    {
+      gpu.add_constant_arg( B_HASHES, bucket_hashes.data(), bucket_hashes.size() * sizeof( uint64_t ) );
+    });
+
+    // read/write buffers used by each batch
+    gpu_pool->set_fn_init_device_buffers( [ & ]( gpu_t& gpu )
+    {
+      gpu.add_indexed_buffer<size_t>( B_INITIAL_COUNTS, counts.size() );
+      gpu.add_indexed_buffer<cl_uint>( B_NUM_RESULTS, 1 );
+      gpu.add_indexed_buffer<size_t>( B_RESULTS, GPU_BATCH_MAX_RESULTS );
+    });
+
+    constexpr cl_uint zero = 0;
+    gpu_pool->set_fn_prepare_batch( [ & ]( gpu_t& gpu )
+    {
+      std::lock_guard<std::mutex> guard( gpu_mutex );
+      gpu.write_indexed_buffer( B_INITIAL_COUNTS, counts.data() );
+      gpu.write_indexed_buffer( B_NUM_RESULTS, &zero );
+      gpu.set_arg( B_INITIAL_COUNTS );
+      gpu.set_arg( B_NUM_RESULTS );
+      gpu.set_arg( B_RESULTS );
+      size_t this_work_size = ( remaining_work < GPU_MAX_WORK_SIZE ) ? remaining_work : GPU_MAX_WORK_SIZE;
+      remaining_work -= this_work_size;
+      gpu.set_next_work_size( this_work_size );
+      return next_combination( counts, GPU_MAX_WORK_SIZE );
+    });
+
+    gpu_pool->set_fn_execute_batch( [ & ]( gpu_t& gpu )
+    {
+      gpu.execute();
+      gpu.read_buffer( B_NUM_RESULTS );
+      gpu.read_buffer( B_RESULTS );
+    });
+
+    gpu_pool->set_fn_batch_results( [ & ]( gpu_t& gpu )
+    {
+      std::lock_guard<std::mutex> guard( gpu_mutex );
+      std::vector<size_t> temp_counts = counts;
+      cl_uint num_results = gpu.get_host_buffer<cl_uint>( B_NUM_RESULTS )[ 0 ];
+      const size_t* results = gpu.get_host_buffer<size_t>( B_RESULTS );
+      const size_t* batch_counts = gpu.get_host_buffer<size_t>( B_INITIAL_COUNTS );
+      if ( num_results > GPU_BATCH_MAX_RESULTS )
+        util::error( "Warning: GPU batch exceeded the maximum number of allowed results ({} > {}). Consider using the \"-m\" option to see them all.", num_results, GPU_BATCH_MAX_RESULTS );
+      for ( size_t i = 0; i < num_results && i < GPU_BATCH_MAX_RESULTS; i++ )
+      {
+        for ( size_t c = 0; c < counts.size(); c++ )
+          temp_counts[ c ] = batch_counts[ c ];
+        if ( next_combination( temp_counts, results[ i ] ) )
+        {
+          get_combination( current_string, temp_counts, indices, indices2 );
+          uint64_t hash = compute_hash( current_string );
+          auto match = name_hashes.find( hash );
+          if ( match != name_hashes.end() )
+            print_match( current_string.as_string( original_pattern ), match->second );
+          else if ( hash != 0 ) // zeros are used to fill in the buckets, so this isn't a false positive worth warning about
+            util::error( "Error: GPU result did not match on CPU ({}): {}", results[ i ], current_string.as_string() );
+        }
+        else
+        {
+          util::error( "Error: GPU result is out of range ({})", results[ i ] );
+        }
+      }
+      if ( !QUIET )
+      {
+        progress_bar.increment( gpu.get_last_work_size() );
+        progress_bar.out();
+      }
+    });
+
+    gpu_pool->execute();
   }
+};
+
+void match_patterns( const std::unordered_map<uint64_t, uint32_t>& name_hashes )
+{
+  pattern_bruteforcer_t pattern_bruteforcer( name_hashes );
+  for ( size_t pattern_index = 0; pattern_index < PATTERNS.size(); pattern_index++ )
+    pattern_bruteforcer.match_pattern( pattern_index );
+}
+
+int main( int argc, char** argv )
+{
+  NUM_THREADS = std::thread::hardware_concurrency();
+  read_args( argc, argv );
+  std::unordered_map<uint32_t, std::string_view> listfile = read_listfile( LISTFILE_PATH );
+  read_pattern_file();
+  std::unordered_map<uint64_t, uint32_t> name_hashes = read_name_hashes( NAME_HASH_STR, listfile );
+
+  if ( PATTERNS.empty() )
+    match_with_just_listfile( listfile, name_hashes );
+  else
+    match_patterns( name_hashes );
 
   return 0;
 }

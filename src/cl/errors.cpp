@@ -142,7 +142,7 @@ const char* cl_error_string( cl_int error )
     case CL_MAX_SIZE_RESTRICTION_EXCEEDED:
       return "CL_MAX_SIZE_RESTRICTION_EXCEEDED";
 #endif
-    // error codes from varaious other headers may not be defined here
+    // error codes from various other headers may not be defined here
     case -1000:
       return "CL_INVALID_GL_SHAREGROUP_REFERENCE_KHR";
     case -1001:

@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.1...3.28)
 
 # embed kernels
 file(READ "src/cl/hashlittle2.cl" KERNEL_HASHLITTLE2)
+file(READ "src/cl/sstrhash.cl" KERNEL_SSTRHASH)
 configure_file("src/cl/kernels.h" "src/kernels.h" @ONLY)
 
 project(bruteforcer VERSION 1.0 LANGUAGES CXX)
