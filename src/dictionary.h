@@ -35,6 +35,26 @@ struct dictionary_t
     });
   }
 
+  dictionary_t( const std::vector<std::string_view>& word_list ) :
+    _words(), _min_length( 0 ), _max_length( 0 )
+  {
+    for ( auto line : word_list )
+    {
+      if ( _min_length == 0 || line.size() < _min_length )
+        _min_length = line.size();
+      if ( line.size() > _max_length )
+        _max_length = line.size();
+      _words.emplace_back( line );
+      util::to_upper( _words.back() );
+    }
+
+    std::sort( _words.begin(), _words.end(), []( const std::string& a, const std::string& b ) {
+      if ( a.size() != b.size() )
+        return a.size() < b.size();
+      return a < b;
+    });
+  }
+
   size_t size() const
   {
     return _words.size();

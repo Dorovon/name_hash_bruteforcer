@@ -78,6 +78,7 @@ hash_string_t::hash_string_t( std::string_view str, size_t hash_type, const std:
           min_size += dictionaries[ 0 ].min_length() - 1;
           max_size += dictionaries[ 0 ].max_length() - 1;
         }
+        dictionary_index++;
       }
       if ( c == '*' || c == '%' )
         num_scratch_bytes++; // extra space to keep track of these replacements
@@ -151,9 +152,9 @@ void hash_string_t::compute_partial_hash()
   {
     if ( ( *this )[ 0 ] == '*' || ( *this )[ 0 ] == '%' || ( *this )[ 0 ] == '@' )
     {
-      for ( size_t length = size; length <= max_size; length++ )
-        hash_states.emplace_back( hashlittle2_precompute( *this, 0, length ) );
       offset = 0;
+      for ( size_t length = min_size; length <= max_size; length++ )
+        hash_states.emplace_back( hashlittle2_precompute( *this, 0, length ) );
       return;
     }
 

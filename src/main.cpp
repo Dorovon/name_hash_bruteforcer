@@ -20,6 +20,7 @@
 
 static unsigned char LETTERS[ 256 ] = { 0 };
 static size_t LETTERS_SIZE = 0;
+static std::string LISTFILE_DATA = "";
 static std::string LISTFILE_PATH = "";
 static const char* PROGRAM_NAME = "bruteforcer";
 static size_t GPU_BATCH_MAX_RESULTS = 1024;
@@ -366,8 +367,8 @@ std::unordered_map<uint32_t, std::string_view> read_listfile( const std::string&
     return {};
 
   std::unordered_map<uint32_t, std::string_view> listfile;
-  std::string listfile_data = util::read_text_file( path );
-  util::read_lines( listfile_data, [ & ]( std::string_view line )
+  LISTFILE_DATA = util::read_text_file( path );
+  util::read_lines( LISTFILE_DATA, [ & ]( std::string_view line )
   {
     auto splits = util::string_split( line, ";" );
     if ( splits.size() >= 2 )
@@ -438,8 +439,7 @@ std::unordered_map<uint64_t, uint32_t> read_name_hashes( const std::string& hash
   return name_hashes;
 }
 
-void match_with_just_listfile( const std::unordered_map<uint32_t, std::string_view>& listfile,
-                               const std::unordered_map<uint64_t, uint32_t>& name_hashes )
+void generate_patterns_from_listfile( const std::unordered_map<uint32_t, std::string_view>& listfile )
 {
   if ( listfile.empty() )
     exit_usage( "Error: either a listfile or pattern must be provided" );
@@ -451,13 +451,13 @@ void match_with_just_listfile( const std::unordered_map<uint32_t, std::string_vi
   for ( auto& [ file_data_id, name ] : listfile )
   {
     // check if prepending the hash with some specific directories finds anything
-    for ( auto prefix : { "Data/", "Alternate/", "Test/" } )
-    {
-      hash_string_t data_name{ prefix + std::string( name ), HASH_TYPE };
-      auto match = name_hashes.find( compute_hash( data_name ) );
-      if ( match != name_hashes.end() )
-        print_match( data_name.as_string( prefix + std::string( name ) ), match->second );
-    }
+    // for ( auto prefix : { "Data/", "Alternate/", "Test/" } )
+    // {
+    //   hash_string_t data_name{ prefix + std::string( name ), HASH_TYPE };
+    //   auto match = name_hashes.find( compute_hash( data_name ) );
+    //   if ( match != name_hashes.end() )
+    //     print_match( data_name.as_string( prefix + std::string( name ) ), match->second );
+    // }
 
     for ( size_t i = name.size() - 1; i > 0; i-- )
     {
@@ -472,59 +472,16 @@ void match_with_just_listfile( const std::unordered_map<uint32_t, std::string_vi
     }
   }
 
-  progress_bar_t progress_bar( static_cast<double>( num_paths ) * num_base );
+  std::vector<std::string_view> path_names_vec{ path_names.begin(), path_names.end() };
   std::vector<std::string_view> base_names_vec{ base_names.begin(), base_names.end() };
-  std::vector<std::thread> threads;
-  progress_bar.reset_threads();
-  for ( int i = 0; i < NUM_THREADS; i++ )
-  {
-    threads.emplace_back( [ & ]( int thread_index )
-    {
-      size_t update_count = 0;
-      for ( size_t b = thread_index; b < base_names_vec.size(); b += NUM_THREADS )
-      {
-        std::string current_name;
-        hash_string_t hash_name;
-        for ( auto path : path_names )
-        {
-          current_name = path;
-          current_name += "/";
-          current_name += base_names_vec[ b ];
-          hash_name = current_name;
-          auto match = name_hashes.find( compute_hash( hash_name ) );
-          if ( match != name_hashes.end() )
-            print_match( hash_name.as_string( current_name ), match->second );
-          if ( !QUIET )
-          {
-            update_count++;
-            if ( update_count > 10000 )
-            {
-              progress_bar.increment( update_count );
-              update_count = 0;
-            }
-          }
-        }
-      }
-      if ( !QUIET )
-        progress_bar.increment( update_count );
-      progress_bar.finish_thread();
-    }, i );
-  }
-  if ( !QUIET )
-  {
-    threads.emplace_back( [ & ]( int )
-    {
-      using namespace std::chrono_literals;
-      while ( !progress_bar.is_finished( NUM_THREADS ) )
-      {
-        progress_bar.out();
-        std::this_thread::sleep_for( 100ms );
-      }
-    }, NUM_THREADS );
-  }
-  for ( auto& thread : threads )
-    thread.join();
-  progress_bar.finish();
+
+  DICTIONARIES.clear();
+  DICTIONARIES.emplace_back( path_names_vec );
+  DICTIONARIES.emplace_back( base_names_vec );
+  PATTERNS.clear();
+  PATTERNS.push_back( "@/@" );
+  while ( ALPHABETS.size() < PATTERNS.size() )
+    ALPHABETS.emplace_back( std::begin( LETTERS ), std::begin( LETTERS ) + LETTERS_SIZE );
 }
 
 struct pattern_bruteforcer_t
@@ -1011,6 +968,9 @@ int main( int argc, char** argv )
   for ( const auto& p : DICTIONARY_FILES )
     DICTIONARIES.emplace_back( p );
 
+  if ( PATTERNS.empty() )
+    generate_patterns_from_listfile( listfile );
+
   if ( !PATTERNS.empty() && DICTIONARIES.empty() )
   {
     for ( const auto& p : PATTERNS )
@@ -1025,10 +985,7 @@ int main( int argc, char** argv )
     }
   }
 
-  if ( PATTERNS.empty() )
-    match_with_just_listfile( listfile, name_hashes );
-  else
-    match_patterns( name_hashes );
+  match_patterns( name_hashes );
 
   return 0;
 }
