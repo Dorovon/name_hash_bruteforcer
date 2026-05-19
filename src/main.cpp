@@ -758,9 +758,9 @@ struct pattern_bruteforcer_t
       defines += std::to_string( indices2[ i ] - current_string.offset );
     }
     defines += "\n";
+    defines += std::format( "#define MAX_LENGTH {}\n", current_string.max_size - current_string.offset );
     if ( HASH_TYPE == H_HASHLITTLE2 )
     {
-      defines += std::format( "#define MAX_LENGTH {}\n", current_string.max_size - current_string.offset );
       std::string str_a;
       std::string str_b;
       std::string str_c;
@@ -793,11 +793,10 @@ struct pattern_bruteforcer_t
       str_c += "}\n";
       defines += str_a + str_b + str_c;
     }
-    else
+    else if ( HASH_TYPE == H_SSTRHASH )
     {
       defines += std::format( "#define A {}\n", current_string.hash_states[ 0 ].a );
       defines += std::format( "#define B {}\n", current_string.hash_states[ 0 ].b );
-      defines += std::format( "#define C {}\n", current_string.hash_states[ 0 ].c );
     }
     defines += std::format( "#define BUCKET_MASK {}\n", bucket_mask );
     defines += std::format( "#define NUM_HASHES {}\n", bucket_hashes.size() );

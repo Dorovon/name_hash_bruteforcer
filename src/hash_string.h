@@ -176,6 +176,7 @@ void hash_string_t::compute_partial_hash()
       if ( ( *this )[ i ] == '*' || ( *this )[ i ] == '%' || ( *this )[ i ] == '@' )
         break;
     }
+    offset = i;
     hash_states.emplace_back( s_str_hash_precompute( *this, i ) );
   }
 }
