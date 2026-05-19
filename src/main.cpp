@@ -32,6 +32,8 @@ static int NUM_THREADS = 1;
 static bool USE_GPU = false;
 static bool QUIET = false;
 static size_t HASH_TYPE = H_HASHLITTLE2;
+static std::vector<std::string> DICTIONARY_FILES;
+static std::vector<dictionary_t> DICTIONARIES;
 
 void print_match( std::string_view match, uint32_t file_data_id = 0 )
 {
@@ -44,27 +46,84 @@ void print_match( std::string_view match, uint32_t file_data_id = 0 )
   util::print_green( s );
 }
 
-void get_combination( hash_string_t& str, std::vector<size_t>& counts, const std::vector<size_t>& indices, const std::vector<size_t>& indices2 )
+void get_combination( hash_string_t& str, std::vector<size_t>& counts, const std::vector<size_t>& indices,
+                      const std::vector<size_t>& indices2, const std::vector<size_t>& dictionary_indices )
 {
-  for ( size_t i = 0; i < counts.size(); i++ )
+  unsigned char* indices_str = &str[ str.data_size - indices.size() ];
+  for ( size_t i = 0; i < indices.size(); i++ )
+    indices_str[ i ] = LETTERS[ counts[ i ] ];
+  size_t string_index = 0;
+  size_t index_index = 0;
+  size_t index2_index = 0;
+  size_t dictionary_index = 0;
+  size_t write_index = 0;
+  while ( string_index < str.size )
   {
-    str[ indices[ i ] ] = LETTERS[ counts[ i ] ];
-    if ( i < indices2.size() )
-      str[ indices2[ i ] ] = LETTERS[ counts[ i ] ];
+    if ( index_index < indices.size() && string_index == indices[ index_index ] )
+    {
+      str[ write_index++ ] = indices_str[ index_index ];
+      index_index++;
+    }
+    else if ( index2_index < indices2.size() && string_index == indices2[ index2_index ] )
+    {
+      str[ write_index++ ] = indices_str[ index2_index ];
+      index2_index++;
+    }
+    else if ( dictionary_index < dictionary_indices.size() && string_index == dictionary_indices[ dictionary_index ] )
+    {
+      std::string_view word;
+      if ( dictionary_index < DICTIONARIES.size() )
+        word = DICTIONARIES[ dictionary_index ][ counts[ indices.size() + dictionary_index ] ];
+      else
+        word = DICTIONARIES[ 0 ][ counts[ indices.size() + dictionary_index ] ];
+      for ( size_t j = 0; j < word.size(); j++ )
+        str[ write_index++ ] = word[ j ];
+      dictionary_index++;
+    }
+    else
+    {
+      str[ write_index++ ] = str.original_str[ string_index ];
+    }
+    string_index++;
+  }
+  str.current_size = write_index;
+  while ( write_index < str.data_size )
+  {
+    str[ write_index ] = 0;
+    write_index++;
   }
 }
 
-bool next_combination( std::vector<size_t>& counts, size_t increment = 1 )
+bool next_combination( std::vector<size_t>& counts, size_t num_indices, size_t increment = 1 )
 {
   counts[ 0 ] += increment;
   for ( size_t i = 0; i < counts.size(); i++ )
   {
-    if ( counts[ i ] >= LETTERS_SIZE )
+    if ( i < num_indices )
     {
-      if ( i + 1 >= counts.size() )
-        return false;
-      counts[ i + 1 ] += counts[ i ] / LETTERS_SIZE;
-      counts[ i ] = counts[ i ] % LETTERS_SIZE;
+      if ( counts[ i ] >= LETTERS_SIZE )
+      {
+        if ( i + 1 >= counts.size() )
+          return false;
+        counts[ i + 1 ] += counts[ i ] / LETTERS_SIZE;
+        counts[ i ] = counts[ i ] % LETTERS_SIZE;
+      }
+    }
+    else
+    {
+      size_t d = i - num_indices;
+      size_t dictionary_size;
+      if ( d < DICTIONARIES.size() )
+        dictionary_size = DICTIONARIES[ d ].size();
+      else
+        dictionary_size = DICTIONARIES[ 0 ].size();
+      if ( counts[ i ] >= dictionary_size )
+      {
+        if ( i + 1 >= counts.size() )
+          return false;
+        counts[ i + 1 ] += counts[ i ] / dictionary_size;
+        counts[ i ] = counts[ i ] % dictionary_size;
+      }
     }
   }
 
@@ -161,6 +220,7 @@ std::string usage_message()
                       "[-m gpu_match_buffer] "
                       "[-q] "
                       "[-t] "
+                      "[-d dictionary_file] "
                       "[-?]", PROGRAM_NAME );
 }
 
@@ -188,6 +248,8 @@ void print_help()
                "  -m  set the maximum number of matches for a single GPU batch\n"
                "  -q  suppress unnecessary output\n"
                "  -t  calculate a table hash instead\n"
+               "  -d  use the given file as a dictionary to replace @ characters in the pattern\n"
+               "      using this multiple times allows prividing a different files for each wildcard\n"
                "  -?  display this message and exit\n" );
   std::exit( 0 );
 }
@@ -279,6 +341,9 @@ void read_args( int argc, char** argv )
         break;
       case 't':
         HASH_TYPE = H_SSTRHASH;
+        break;
+      case 'd':
+        DICTIONARY_FILES.push_back( get_next_arg() );
         break;
       default:
         exit_usage( std::format( "Error: Unsupported argument: {}", current_arg ) );
@@ -493,12 +558,21 @@ struct pattern_bruteforcer_t
       double pattern_combinations = 1;
       size_t size_1 = 0;
       size_t size_2 = 0;
+      size_t dictionary_index = 0;
       for ( size_t j = 0; j < PATTERNS[ i ].size(); j++ )
       {
         if ( PATTERNS[ i ][ j ] == '*' )
           size_1++;
         if ( PATTERNS[ i ][ j ] == '%' )
           size_2++;
+        if ( PATTERNS[ i ][ j ] == '@' )
+        {
+          if ( dictionary_index < DICTIONARIES.size() )
+            pattern_combinations *= DICTIONARIES[ dictionary_index ].size();
+          else
+            pattern_combinations *= DICTIONARIES[ 0 ].size();
+          dictionary_index++;
+        }
       }
       for ( size_t j = 0; j < size_1 || j < size_2; j++ )
         pattern_combinations *= ALPHABETS[ i ].size();
@@ -539,9 +613,10 @@ struct pattern_bruteforcer_t
   {
     const auto& original_pattern = PATTERNS[ pattern_index ];
     set_alphabet( ALPHABETS[ pattern_index ] );
-    hash_string_t current_string{ original_pattern, HASH_TYPE };
+    hash_string_t current_string{ original_pattern, HASH_TYPE, DICTIONARIES };
     std::vector<size_t> indices;
     std::vector<size_t> indices2;
+    std::vector<size_t> dictionary_indices;
 
     for ( size_t i = 0; i < current_string.size; i++ )
     {
@@ -549,10 +624,12 @@ struct pattern_bruteforcer_t
         indices.push_back( i );
       if ( current_string[ i ] == '%' )
         indices2.push_back( i );
+      if ( current_string[ i ] == '@' )
+        dictionary_indices.push_back( i );
     }
     if ( indices2.size() > indices.size() )
       std::swap( indices, indices2 );
-    std::vector<size_t> counts( indices.size(), 0 );
+    std::vector<size_t> counts( indices.size() + dictionary_indices.size(), 0 );
 
     if ( counts.size() == 0 )
     {
@@ -564,14 +641,15 @@ struct pattern_bruteforcer_t
     }
 
     if ( USE_GPU )
-      match_pattern_gpu( original_pattern, current_string, indices, indices2, counts );
+      match_pattern_gpu( original_pattern, current_string, indices, indices2, dictionary_indices, counts );
     else
-      match_pattern_cpu( original_pattern, indices, indices2, counts );
+      match_pattern_cpu( original_pattern, indices, indices2, dictionary_indices, counts );
   }
 
   void match_pattern_cpu( const auto& original_pattern,
                           std::vector<size_t>& indices,
                           std::vector<size_t>& indices2,
+                          std::vector<size_t>& dictionary_indices,
                           std::vector<size_t>& counts )
   {
     std::vector<std::thread> threads;
@@ -580,11 +658,11 @@ struct pattern_bruteforcer_t
     {
       threads.emplace_back( [ & ]( int thread_index )
       {
-        hash_string_t thread_string{ original_pattern, HASH_TYPE };
+        hash_string_t thread_string{ original_pattern, HASH_TYPE, DICTIONARIES };
         std::vector<size_t> thread_counts = counts;
         if ( thread_index > 0 )
         {
-          if ( !next_combination( thread_counts, thread_index ) )
+          if ( !next_combination( thread_counts, indices.size(), thread_index ) )
           {
             progress_bar.finish_thread();
             return;
@@ -593,7 +671,7 @@ struct pattern_bruteforcer_t
         size_t update_count = 0;
         do
         {
-          get_combination( thread_string, thread_counts, indices, indices2 );
+          get_combination( thread_string, thread_counts, indices, indices2, dictionary_indices );
           auto match = name_hashes.find( compute_hash( thread_string ) );
           if ( match != name_hashes.end() )
             print_match( thread_string.as_string( original_pattern ), match->second );
@@ -606,7 +684,7 @@ struct pattern_bruteforcer_t
               update_count = 0;
             }
           }
-        } while ( next_combination( thread_counts, NUM_THREADS ) );
+        } while ( next_combination( thread_counts, indices.size(), NUM_THREADS ) );
         if ( !QUIET )
           progress_bar.increment( update_count );
         progress_bar.finish_thread();
@@ -632,6 +710,7 @@ struct pattern_bruteforcer_t
                           hash_string_t& current_string,
                           std::vector<size_t>& indices,
                           std::vector<size_t>& indices2,
+                          std::vector<size_t>& dictionary_indices,
                           std::vector<size_t>& counts )
   {
     enum gpu_pattern_buffers : size_t
@@ -640,7 +719,49 @@ struct pattern_bruteforcer_t
       B_NUM_RESULTS = 1,
       B_RESULTS = 2,
       B_HASHES = 3,
+      B_DICTIONARY_WORDS = 4,
+      B_WORD_OFFSETS = 5,
+      B_WORD_LENGTHS = 6,
+      B_DICTIONARY_LENGTHS = 7,
+      B_WORD_INDICES = 8,
     };
+
+    // Prepare data
+    std::vector<unsigned char> dictionary_words;
+    std::vector<uint32_t> word_offsets;
+    std::vector<uint16_t> word_lengths;
+    if ( DICTIONARIES.empty() )
+    {
+      dictionary_words.emplace_back();
+      word_offsets.emplace_back();
+      word_lengths.emplace_back();
+    }
+    else
+    {
+      size_t total_chars = 0;
+      size_t total_words = 0;
+      for ( const auto& d : DICTIONARIES )
+      {
+        for ( const auto& w : d._words )
+        {
+          total_chars += w.size();
+          total_words++;
+        }
+      }
+      dictionary_words.reserve( total_chars );
+      word_offsets.reserve( total_words );
+      word_lengths.reserve( total_words );
+      for ( auto d : DICTIONARIES )
+      {
+        for ( const auto& w : d._words )
+        {
+          word_offsets.push_back( static_cast<uint32_t>( dictionary_words.size() ) );
+          word_lengths.push_back( static_cast<uint16_t>( w.size() ) );
+          for ( auto c : w )
+            dictionary_words.push_back( c );
+        }
+      }
+    }
 
     // Prepare the source code for the kernel.
     std::string defines;
@@ -654,28 +775,14 @@ struct pattern_bruteforcer_t
     }
     defines += "}\n";
     defines += "#define STR ";
-    if ( HASH_TYPE == H_HASHLITTLE2 )
+    for ( size_t i = current_string.offset; i < current_string.size; i++ )
     {
-      for ( size_t i = current_string.offset; i < current_string.data_size; i++ )
-      {
-        if ( i != current_string.offset )
-          defines += ",";
-        defines += std::to_string( static_cast<unsigned int>( current_string[ i ] ) );
-      }
-      defines += "\n";
-      defines += std::format( "#define LEN {}\n", current_string.data_size - current_string.offset - 12 );
+      if ( i != current_string.offset )
+        defines += ",";
+      defines += std::to_string( static_cast<unsigned int>( current_string[ i ] ) );
     }
-    else
-    {
-      for ( size_t i = current_string.offset; i < current_string.size; i++ )
-      {
-        if ( i != current_string.offset )
-          defines += ",";
-        defines += std::to_string( static_cast<unsigned int>( current_string[ i ] ) );
-      }
-      defines += "\n";
-      defines += std::format( "#define LEN {}\n", current_string.size - current_string.offset );
-    }
+    defines += "\n";
+    defines += std::format( "#define LEN {}\n", current_string.size - current_string.offset );
     defines += std::format( "#define NUM_INDICES {}\n", indices.size() );
     defines += std::format( "#define NUM_INDICES2 {}\n", indices2.size() );
     defines += "#define INDICES ";
@@ -694,13 +801,93 @@ struct pattern_bruteforcer_t
       defines += std::to_string( indices2[ i ] - current_string.offset );
     }
     defines += "\n";
-    defines += std::format( "#define A {}\n", current_string.a );
-    defines += std::format( "#define B {}\n", current_string.b );
-    defines += std::format( "#define C {}\n", current_string.c );
+    if ( HASH_TYPE == H_HASHLITTLE2 )
+    {
+      defines += std::format( "#define MAX_LENGTH {}\n", current_string.max_size - current_string.offset );
+      std::string str_a;
+      std::string str_b;
+      std::string str_c;
+      str_a += "#define A {";
+      str_b += "#define B {";
+      str_c += "#define C {";
+      for ( size_t i = current_string.offset; i <= current_string.max_size; i++ )
+      {
+        if ( i != current_string.offset )
+        {
+          str_a += ",";
+          str_b += ",";
+          str_c += ",";
+        }
+        if ( i >= current_string.min_size )
+        {
+          str_a += std::to_string( current_string.hash_states[ i - current_string.min_size ].a );
+          str_b += std::to_string( current_string.hash_states[ i - current_string.min_size ].b );
+          str_c += std::to_string( current_string.hash_states[ i - current_string.min_size ].c );
+        }
+        else
+        {
+          str_a += "0";
+          str_b += "0";
+          str_c += "0";
+        }
+      }
+      str_a += "}\n";
+      str_b += "}\n";
+      str_c += "}\n";
+      defines += str_a + str_b + str_c;
+    }
+    else
+    {
+      defines += std::format( "#define A {}\n", current_string.hash_states[ 0 ].a );
+      defines += std::format( "#define B {}\n", current_string.hash_states[ 0 ].b );
+      defines += std::format( "#define C {}\n", current_string.hash_states[ 0 ].c );
+    }
     defines += std::format( "#define BUCKET_MASK {}\n", bucket_mask );
     defines += std::format( "#define NUM_HASHES {}\n", bucket_hashes.size() );
     defines += std::format( "#define BUCKET_SIZE {}\n", bucket_size );
     defines += std::format( "#define MAX_RESULTS {}\n", GPU_BATCH_MAX_RESULTS );
+
+    defines += std::format( "#define NUM_DICTIONARY_INDICES {}\n", dictionary_indices.size() );
+    defines += std::format( "#define DICTIONARY_INDICES " );
+    for ( size_t i = 0; i < dictionary_indices.size(); i++ )
+    {
+      if ( i != 0 )
+        defines += ",";
+      defines += std::to_string( dictionary_indices[ i ] - current_string.offset );
+    }
+    defines += "\n";
+    defines += std::format( "#define NUM_DICTIONARY_SELECTORS {}\n", dictionary_indices.size() );
+    defines += std::format( "#define DICTIONARY_SELECTORS " );
+    for ( size_t i = 0; i < dictionary_indices.size(); i++ )
+    {
+      if ( i != 0 )
+        defines += ",";
+      if ( i < DICTIONARIES.size() )
+        defines += std::to_string( i );
+      else
+        defines += "0";
+    }
+    defines += "\n";
+    defines += std::format( "#define NUM_DICTIONARIES {}\n", DICTIONARIES.size() );
+    defines += std::format( "#define DICTIONARY_LENGTHS " );
+    for ( size_t i = 0; i < DICTIONARIES.size(); i++ )
+    {
+      if ( i != 0 )
+        defines += ",";
+      defines += std::to_string( DICTIONARIES[ i ].size() );
+    }
+    defines += "\n";
+    defines += std::format( "#define DICTIONARY_OFFSETS " );
+    size_t current_offset = 0;
+    for ( size_t i = 0; i < DICTIONARIES.size(); i++ )
+    {
+      if ( i != 0 )
+        defines += ",";
+      defines += std::to_string( current_offset );
+      current_offset += DICTIONARIES[ i ].size();
+    }
+    defines += "\n";
+
     std::vector<const char*> source;
     source.push_back( defines.c_str() );
     switch ( HASH_TYPE )
@@ -718,6 +905,13 @@ struct pattern_bruteforcer_t
     size_t total_work = 1;
     for ( size_t i = 0; i < indices.size(); i++ )
       total_work *= LETTERS_SIZE;
+    for ( size_t i = 0; i < dictionary_indices.size(); i++ )
+    {
+      if ( i < DICTIONARIES.size() )
+        total_work *= DICTIONARIES[ i ].size();
+      else
+        total_work *= DICTIONARIES[ 0 ].size();
+    }
     size_t remaining_work = total_work;
 
     gpu_pool->init_gpus( source, "bruteforce" );
@@ -725,15 +919,18 @@ struct pattern_bruteforcer_t
     // constant buffers used by every device
     gpu_pool->set_fn_init_shared_buffers( [ & ]( gpu_t& gpu )
     {
-      gpu.add_constant_arg( B_HASHES, bucket_hashes.data(), bucket_hashes.size() * sizeof( uint64_t ) );
+      gpu.add_constant_arg<uint64_t>( B_HASHES, bucket_hashes.data(), bucket_hashes.size() ); // global const uint64_t* hashes
+      gpu.add_constant_arg<unsigned char>( B_DICTIONARY_WORDS, dictionary_words.data(), dictionary_words.size() ); // global const uchar* dictionary_words
+      gpu.add_constant_arg<uint32_t>( B_WORD_OFFSETS, word_offsets.data(), word_offsets.size() ); // global const uint32_t* word_offsets
+      gpu.add_constant_arg<uint16_t>( B_WORD_LENGTHS, word_lengths.data(), word_lengths.size() ); // global const uint16_t* word_lengths
     });
 
     // read/write buffers used by each batch
     gpu_pool->set_fn_init_device_buffers( [ & ]( gpu_t& gpu )
     {
-      gpu.add_indexed_buffer<size_t>( B_INITIAL_COUNTS, counts.size() );
-      gpu.add_indexed_buffer<cl_uint>( B_NUM_RESULTS, 1 );
-      gpu.add_indexed_buffer<size_t>( B_RESULTS, GPU_BATCH_MAX_RESULTS );
+      gpu.add_indexed_buffer<size_t>( B_INITIAL_COUNTS, counts.size() ); // global const size_t* initial_counts
+      gpu.add_indexed_buffer<cl_uint>( B_NUM_RESULTS, 1 ); // global uint* num_results
+      gpu.add_indexed_buffer<size_t>( B_RESULTS, GPU_BATCH_MAX_RESULTS ); // global size_t* result_id
     });
 
     constexpr cl_uint zero = 0;
@@ -748,7 +945,7 @@ struct pattern_bruteforcer_t
       size_t this_work_size = ( remaining_work < GPU_MAX_WORK_SIZE ) ? remaining_work : GPU_MAX_WORK_SIZE;
       remaining_work -= this_work_size;
       gpu.set_next_work_size( this_work_size );
-      return next_combination( counts, GPU_MAX_WORK_SIZE );
+      return next_combination( counts, indices.size(), GPU_MAX_WORK_SIZE );
     });
 
     gpu_pool->set_fn_execute_batch( [ & ]( gpu_t& gpu )
@@ -771,9 +968,9 @@ struct pattern_bruteforcer_t
       {
         for ( size_t c = 0; c < counts.size(); c++ )
           temp_counts[ c ] = batch_counts[ c ];
-        if ( next_combination( temp_counts, results[ i ] ) )
+        if ( next_combination( temp_counts, indices.size(), results[ i ] ) )
         {
-          get_combination( current_string, temp_counts, indices, indices2 );
+          get_combination( current_string, temp_counts, indices, indices2, dictionary_indices );
           uint64_t hash = compute_hash( current_string );
           auto match = name_hashes.find( hash );
           if ( match != name_hashes.end() )
@@ -811,6 +1008,22 @@ int main( int argc, char** argv )
   std::unordered_map<uint32_t, std::string_view> listfile = read_listfile( LISTFILE_PATH );
   read_pattern_file();
   std::unordered_map<uint64_t, uint32_t> name_hashes = read_name_hashes( NAME_HASH_STR, listfile );
+  for ( const auto& p : DICTIONARY_FILES )
+    DICTIONARIES.emplace_back( p );
+
+  if ( !PATTERNS.empty() && DICTIONARIES.empty() )
+  {
+    for ( const auto& p : PATTERNS )
+    {
+      for ( auto c : p )
+      {
+        if ( c == '@' )
+        {
+          exit_usage( "At least one dictionary must be provided for patterns that contain @" );
+        }
+      }
+    }
+  }
 
   if ( PATTERNS.empty() )
     match_with_just_listfile( listfile, name_hashes );

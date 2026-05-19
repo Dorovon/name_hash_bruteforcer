@@ -253,13 +253,6 @@ void gpu_t::set_arg( cl_uint arg_index, size_t buffer_index )
   set_arg( arg_index, buffer );
 }
 
-void gpu_t::add_constant_arg( cl_uint arg_index, const void* data, size_t size, cl_mem_flags flags )
-{
-  cl_mem buffer = add_buffer( size, flags );
-  write_buffer( buffer, data, size );
-  set_arg( arg_index, buffer );
-}
-
 size_t gpu_t::execute()
 {
   cl_int error = clEnqueueNDRangeKernel( queue, kernel, 1, NULL, &work_sizes[ current_buffer_index ], NULL,

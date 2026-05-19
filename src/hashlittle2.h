@@ -26,19 +26,20 @@ inline uint64_t hashlittle2( hash_string_t& str )
 {
   const unsigned char* k;
   uint32_t a, b, c;
-  size_t length = str.size;
+  size_t length = str.current_size;
   if ( str.offset > 0 )
   {
     k = &str[ str.offset ];
     length -= str.offset;
-    a = str.a;
-    b = str.b;
-    c = str.c;
+    const hash_state_t& state = str.state();
+    a = state.a;
+    b = state.b;
+    c = state.c;
   }
   else
   {
     k = str.data();
-    a = b = c = 0xdeadbeef + static_cast<uint32_t>( str.size );
+    a = b = c = 0xdeadbeef + static_cast<uint32_t>( str.current_size );
   }
 
   while ( length > 12 )
@@ -59,17 +60,15 @@ inline uint64_t hashlittle2( hash_string_t& str )
   return ( static_cast<uint64_t>( c ) << 32 ) | b;
 }
 
-inline void hashlittle2_precompute( hash_string_t& str, size_t length )
+inline hash_state_t hashlittle2_precompute( hash_string_t& str, size_t length, size_t string_size )
 {
   const unsigned char* k;
   uint32_t a, b, c;
   k = str.data();
-  a = b = c = 0xdeadbeef + static_cast<uint32_t>( str.size );
+  a = b = c = 0xdeadbeef + static_cast<uint32_t>( string_size );
 
   while ( length >= 12 )
     mix_block( k, length, a, b, c );
 
-  str.a = a;
-  str.b = b;
-  str.c = c;
+  return { string_size, a, b, c };
 }

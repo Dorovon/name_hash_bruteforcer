@@ -12,6 +12,8 @@
 // BUCKET_SIZE: the number of hashes in each bucket
 // MAX_RESULTS: the maximum number of results that are allowed
 
+typedef uchar uint8_t;
+typedef ushort uint16_t;
 typedef uint uint32_t;
 typedef ulong uint64_t;
 
@@ -51,7 +53,9 @@ inline uint32_t s_str_hash( unsigned char* str )
 }
 
 
-kernel void bruteforce( global size_t* initial_counts, global uint* num_results, global size_t* result_id, global uint64_t* hashes )
+kernel void bruteforce( global const size_t* initial_counts, global uint* num_results, global size_t* result_id, global const uint64_t* hashes,
+                        global const uchar* dictionary_words, global const uint32_t* word_offsets, global const uint16_t* word_lengths,
+                        global const uint32_t* dictionary_lengths, global const uint32_t* word_indices )
 {
   size_t id = get_global_id( 0 );
 

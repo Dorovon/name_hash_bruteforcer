@@ -12,9 +12,10 @@ static uint32_t const s_hashtable[ 16 ] = {
 
 inline uint32_t s_str_hash( hash_string_t& str )
 {
-  uint32_t seed = str.a;
-  uint32_t shift = str.b;
-  for ( size_t i = str.offset; i < str.size; i++ )
+  const hash_state_t& state = str.state();
+  uint32_t seed = state.a;
+  uint32_t shift = state.b;
+  for ( size_t i = str.offset; i < str.current_size; i++ )
   {
     seed = ( s_hashtable[ str[ i ] >> 4 ] - s_hashtable[ str[ i ] & 0xf ] ) ^ ( shift + seed );
     shift = str[ i ] + seed + 33 * shift + 3;
@@ -23,17 +24,16 @@ inline uint32_t s_str_hash( hash_string_t& str )
   return seed ? seed : 1;
 }
 
-inline void s_str_hash_precompute( hash_string_t& str, size_t length )
+inline hash_state_t s_str_hash_precompute( hash_string_t& str, size_t length )
 {
   uint32_t seed = 0x7fed7fed;
   uint32_t shift = 0xeeeeeeee;
 
-  for ( size_t i = str.offset; i < length; i++ )
+  for ( size_t i = 0; i < length; i++ )
   {
     seed = ( s_hashtable[ str[ i ] >> 4 ] - s_hashtable[ str[ i ] & 0xf ] ) ^ ( shift + seed );
     shift = str[ i ] + seed + 33 * shift + 3;
   }
 
-  str.a = seed;
-  str.b = shift;
+  return { 0, seed, shift, 0 };
 }

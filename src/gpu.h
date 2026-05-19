@@ -46,7 +46,6 @@ struct gpu_t
   void set_arg( cl_uint arg_index, cl_mem buffer );
   void set_arg( cl_uint arg_index, size_t buffer_index );
   void set_arg( size_t index ) { set_arg( static_cast<cl_uint>( index ), index ); }
-  void add_constant_arg( cl_uint arg_index, const void* data, size_t size, cl_mem_flags flags = CL_MEM_READ_WRITE );
   size_t execute();
 
   void set_next_work_size( size_t work_size )
@@ -75,6 +74,14 @@ struct gpu_t
       host_buffers[ i ][ index ].resize( size * sizeof( T ) );
       buffer_sizes[ index ] = size * sizeof( T );
     }
+  }
+
+  template<typename T>
+  void add_constant_arg( cl_uint arg_index, const void* data, size_t size, cl_mem_flags flags = CL_MEM_READ_WRITE )
+  {
+    cl_mem buffer = add_buffer( size * sizeof( T ), flags );
+    write_buffer( buffer, data, size * sizeof( T ) );
+    set_arg( arg_index, buffer );
   }
 
   template<typename T>

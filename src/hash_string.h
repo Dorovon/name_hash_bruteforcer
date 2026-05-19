@@ -1,7 +1,11 @@
 #pragma once
 
+#include "dictionary.h"
+#include "util.h"
+
 #include <memory>
 #include <string_view>
+#include <vector>
 
 enum hash_type : size_t
 {
@@ -9,31 +13,37 @@ enum hash_type : size_t
   H_SSTRHASH = 1,
 };
 
-struct hash_string_t
+// state for partially completed hash
+struct hash_state_t
 {
-  size_t hash_type;
-
-  // length of the string
-  size_t size;
-
-  // string data padded to mod 12 + 1 for simplified hashing and cstring handling
-  std::shared_ptr<unsigned char[]> _data;
-  size_t data_size;
-
-  // state for partially completed hash
-  size_t offset;
+  size_t length;
   uint32_t a;
   uint32_t b;
   uint32_t c;
+};
+
+struct hash_string_t
+{
+  std::string original_str;
+  size_t hash_type;
+  size_t size; // length of the pattern
+  size_t min_size; // minimum length accounting for pattern replacements
+  size_t max_size; // maximum length accounting for pattern replacements
+  size_t data_size; // maximum length padded to provide extra space for simplified handling
+  std::shared_ptr<unsigned char[]> _data; // data_size bytes
+  std::vector<hash_state_t> hash_states; // partially completed hash states
+  size_t offset; // offset up to where the hash state is computed
+  size_t current_size; // needs to be set before computing the hash if it changes
 
   hash_string_t();
-  hash_string_t( std::string_view str, size_t hash_type );
+  hash_string_t( std::string_view str, size_t hash_type, const std::vector<dictionary_t>& dictionaries );
   void compute_partial_hash();
   hash_string_t& operator=( std::string_view str );
   unsigned char& operator[]( const size_t index );
   const unsigned char& operator[]( const size_t index ) const;
   std::string as_string( std::string_view original_pattern = {} ) const;
   const unsigned char* data() const;
+  const hash_state_t& state() const;
 };
 
 #include "hashlittle2.h"
@@ -41,21 +51,55 @@ struct hash_string_t
 #include "util.h"
 
 hash_string_t::hash_string_t() :
-  hash_type(), size(), _data(), offset(), a(), b(), c()
+  original_str(), hash_type(), size(), max_size(), data_size(), _data(), hash_states()
 {}
 
-hash_string_t::hash_string_t( std::string_view str, size_t hash_type ) :
-  hash_type( hash_type), size( str.size() ), offset(), a(), b(), c()
+hash_string_t::hash_string_t( std::string_view str, size_t hash_type, const std::vector<dictionary_t>& dictionaries = {} ) :
+  original_str( str ), hash_type( hash_type ), size( str.size() ), hash_states(), current_size( str.size() )
 {
-  data_size = str.size();
+  util::to_upper( original_str );
+  size_t num_scratch_bytes = 0;
+  min_size = str.size();
+  max_size = str.size();
+  if ( !dictionaries.empty() )
+  {
+    size_t dictionary_index = 0;
+    for ( auto c : str )
+    {
+      if ( c == '@' )
+      {
+        if ( dictionary_index < dictionaries.size() )
+        {
+          min_size += dictionaries[ dictionary_index ].min_length() - 1;
+          max_size += dictionaries[ dictionary_index ].max_length() - 1;
+        }
+        else
+        {
+          min_size += dictionaries[ 0 ].min_length() - 1;
+          max_size += dictionaries[ 0 ].max_length() - 1;
+        }
+      }
+      if ( c == '*' || c == '%' )
+        num_scratch_bytes++; // extra space to keep track of these replacements
+    }
+  }
+  data_size = max_size;
   if ( ( data_size % 12 ) != 0 )
-    data_size += 12 - str.size() % 12;
-  _data = std::make_shared<unsigned char[]>( data_size + 1 );
-  for ( size_t i = 0; i < str.size(); i++ )
+    data_size += 12 - data_size % 12;
+  data_size++; // null byte
+  data_size += num_scratch_bytes;
+  _data = std::make_shared<unsigned char[]>( data_size );
+  for ( size_t i = 0; i < size; i++ )
+  {
+    if ( str[ i ] == '@' && dictionaries.empty() )
+    {
+      util::error( "No dictionaries for hash_string_t" );
+      std::exit( 1 );
+    }
     _data.get()[ i ] = util::to_upper( str[ i ] );
-  for ( size_t i = str.size(); i < data_size; i++ )
+  }
+  for ( size_t i = size; i < data_size; i++ )
     _data.get()[ i ] = 0;
-  _data.get()[ data_size ] = 0; // null byte
   compute_partial_hash();
 }
 
@@ -78,10 +122,13 @@ const unsigned char& hash_string_t::operator[]( const size_t index ) const
 std::string hash_string_t::as_string( std::string_view original_pattern ) const
 {
   std::string s = "";
-  for ( size_t i = 0; i < size; i++ )
+  bool try_to_match_pattern = true;
+  for ( size_t i = 0; i < current_size; i++ )
   {
     unsigned char ch;
-    if ( i < original_pattern.size() && original_pattern[ i ] != '*' && original_pattern[ i ] != '%' )
+    if ( i < original_pattern.size() && original_pattern[ i ] == '@' )
+      try_to_match_pattern = false;
+    if ( try_to_match_pattern && i < original_pattern.size() && original_pattern[ i ] != '*' && original_pattern[ i ] != '%' )
       ch = original_pattern[ i ];
     else
       ch = util::to_lower( _data.get()[ i ] );
@@ -102,31 +149,55 @@ void hash_string_t::compute_partial_hash()
 {
   if ( hash_type == H_HASHLITTLE2 )
   {
-    if ( ( *this )[ 0 ] == '*' || ( *this )[ 0 ] == '%' )
+    if ( ( *this )[ 0 ] == '*' || ( *this )[ 0 ] == '%' || ( *this )[ 0 ] == '@' )
     {
-      hashlittle2_precompute( *this, 0 );
+      for ( size_t length = size; length <= max_size; length++ )
+        hash_states.emplace_back( hashlittle2_precompute( *this, 0, length ) );
+      offset = 0;
       return;
     }
 
     size_t i;
     for ( i = 0; i < size - 1; i++ )
     {
-      if ( ( *this )[ i + 1 ] == '*' || ( *this )[ i + 1 ] == '%' )
+      if ( ( *this )[ i + 1 ] == '*' || ( *this )[ i + 1 ] == '%' || ( *this )[ i + 1 ] == '@' )
         break;
     }
-    size_t this_size = i - i % 12;
-    hashlittle2_precompute( *this, this_size );
-    offset = this_size;
+    offset = i - i % 12;
+    for ( size_t length = min_size; length <= max_size; length++ )
+      hash_states.emplace_back( hashlittle2_precompute( *this, offset, length ) );
   }
   else if ( hash_type == H_SSTRHASH )
   {
     size_t i;
     for ( i = 0; i < size; i++ )
     {
-      if ( ( *this )[ i ] == '*' || ( *this )[ i ] == '%' )
+      if ( ( *this )[ i ] == '*' || ( *this )[ i ] == '%' || ( *this )[ i ] == '@' )
         break;
     }
-    s_str_hash_precompute( *this, i );
-    offset = i;
+    hash_states.emplace_back( s_str_hash_precompute( *this, i ) );
   }
+}
+
+const hash_state_t& hash_string_t::state() const
+{
+  if ( hash_states.empty() )
+  {
+    util::error( "hash_string_t has no hash state" );
+    std::exit( 1 );
+  }
+
+  if ( hash_type == H_HASHLITTLE2 )
+  {
+    // TODO: optimize
+    for ( const auto& h : hash_states )
+    {
+      if ( h.length == current_size )
+        return h;
+    }
+    util::error( "hash_string_t has no hash state of length {}", current_size );
+    std::exit( 1 );
+  }
+
+  return hash_states[ 0 ];
 }
