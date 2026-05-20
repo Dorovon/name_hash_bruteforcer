@@ -48,15 +48,25 @@ void print_match( std::string_view match, uint32_t file_data_id = 0 )
 }
 
 void get_combination( hash_string_t& str, std::vector<size_t>& counts, const std::vector<size_t>& indices,
-                      const std::vector<size_t>& indices2, const std::vector<size_t>& dictionary_indices )
+                      const std::vector<size_t>& indices2, const std::vector<size_t>& dictionary_indices,
+                      const std::vector<size_t>& dictionary_indices_mirrored )
 {
   unsigned char* indices_str = &str[ str.data_size - indices.size() ];
   for ( size_t i = 0; i < indices.size(); i++ )
     indices_str[ i ] = LETTERS[ counts[ i ] ];
+  std::vector<std::string_view> words_str; // TODO: If this function ever needs to be faster, don't reallocate this every time this runs
+  for ( size_t i = 0; i < dictionary_indices.size(); i++ )
+  {
+    if ( i < DICTIONARIES.size() )
+      words_str.emplace_back( DICTIONARIES[ i ][ counts[ indices.size() + i ] ] );
+    else
+      words_str.emplace_back( DICTIONARIES[ 0 ][ counts[ indices.size() + i ] ] );
+  }
   size_t string_index = 0;
   size_t index_index = 0;
   size_t index2_index = 0;
   size_t dictionary_index = 0;
+  size_t dictionary_index_mirrored = 0;
   size_t write_index = 0;
   while ( string_index < str.size )
   {
@@ -72,14 +82,17 @@ void get_combination( hash_string_t& str, std::vector<size_t>& counts, const std
     }
     else if ( dictionary_index < dictionary_indices.size() && string_index == dictionary_indices[ dictionary_index ] )
     {
-      std::string_view word;
-      if ( dictionary_index < DICTIONARIES.size() )
-        word = DICTIONARIES[ dictionary_index ][ counts[ indices.size() + dictionary_index ] ];
-      else
-        word = DICTIONARIES[ 0 ][ counts[ indices.size() + dictionary_index ] ];
+      std::string_view word = words_str[ dictionary_index ];
       for ( size_t j = 0; j < word.size(); j++ )
         str[ write_index++ ] = word[ j ];
       dictionary_index++;
+    }
+    else if ( dictionary_index_mirrored < dictionary_indices_mirrored.size() && string_index == dictionary_indices_mirrored[ dictionary_index_mirrored ] )
+    {
+      std::string_view word = words_str[ dictionary_index_mirrored ];
+      for ( size_t j = 0; j < word.size(); j++ )
+        str[ write_index++ ] = word[ j ];
+      dictionary_index_mirrored++;
     }
     else
     {
@@ -515,7 +528,8 @@ struct pattern_bruteforcer_t
       double pattern_combinations = 1;
       size_t size_1 = 0;
       size_t size_2 = 0;
-      size_t dictionary_index = 0;
+      size_t d_size_1 = 0;
+      size_t d_size_2 = 0;
       for ( size_t j = 0; j < PATTERNS[ i ].size(); j++ )
       {
         if ( PATTERNS[ i ][ j ] == '*' )
@@ -523,16 +537,19 @@ struct pattern_bruteforcer_t
         if ( PATTERNS[ i ][ j ] == '%' )
           size_2++;
         if ( PATTERNS[ i ][ j ] == '@' )
-        {
-          if ( dictionary_index < DICTIONARIES.size() )
-            pattern_combinations *= DICTIONARIES[ dictionary_index ].size();
-          else
-            pattern_combinations *= DICTIONARIES[ 0 ].size();
-          dictionary_index++;
-        }
+          d_size_1++;
+        if ( PATTERNS[ i ][ j ] == '#' )
+          d_size_2++;
       }
       for ( size_t j = 0; j < size_1 || j < size_2; j++ )
         pattern_combinations *= ALPHABETS[ i ].size();
+      for ( size_t j = 0; j < d_size_1 || j < d_size_2; j++ )
+      {
+        if ( j < DICTIONARIES.size() )
+          pattern_combinations *= DICTIONARIES[ j ].size();
+        else
+          pattern_combinations *= DICTIONARIES[ 0 ].size();
+      }
       total_combinations += pattern_combinations;
     }
 
@@ -574,6 +591,7 @@ struct pattern_bruteforcer_t
     std::vector<size_t> indices;
     std::vector<size_t> indices2;
     std::vector<size_t> dictionary_indices;
+    std::vector<size_t> dictionary_indices_mirrored;
 
     for ( size_t i = 0; i < current_string.size; i++ )
     {
@@ -583,9 +601,13 @@ struct pattern_bruteforcer_t
         indices2.push_back( i );
       if ( current_string[ i ] == '@' )
         dictionary_indices.push_back( i );
+      if ( current_string[ i ] == '#' )
+        dictionary_indices_mirrored.push_back( i );
     }
     if ( indices2.size() > indices.size() )
       std::swap( indices, indices2 );
+    if ( dictionary_indices_mirrored.size() > dictionary_indices.size() )
+      std::swap( dictionary_indices, dictionary_indices_mirrored );
     std::vector<size_t> counts( indices.size() + dictionary_indices.size(), 0 );
 
     if ( counts.size() == 0 )
@@ -598,15 +620,16 @@ struct pattern_bruteforcer_t
     }
 
     if ( USE_GPU )
-      match_pattern_gpu( original_pattern, current_string, indices, indices2, dictionary_indices, counts );
+      match_pattern_gpu( original_pattern, current_string, indices, indices2, dictionary_indices, dictionary_indices_mirrored, counts );
     else
-      match_pattern_cpu( original_pattern, indices, indices2, dictionary_indices, counts );
+      match_pattern_cpu( original_pattern, indices, indices2, dictionary_indices, dictionary_indices_mirrored, counts );
   }
 
   void match_pattern_cpu( const auto& original_pattern,
                           std::vector<size_t>& indices,
                           std::vector<size_t>& indices2,
                           std::vector<size_t>& dictionary_indices,
+                          std::vector<size_t>& dictionary_indices_mirrored,
                           std::vector<size_t>& counts )
   {
     std::vector<std::thread> threads;
@@ -628,7 +651,7 @@ struct pattern_bruteforcer_t
         size_t update_count = 0;
         do
         {
-          get_combination( thread_string, thread_counts, indices, indices2, dictionary_indices );
+          get_combination( thread_string, thread_counts, indices, indices2, dictionary_indices, dictionary_indices_mirrored );
           auto match = name_hashes.find( compute_hash( thread_string ) );
           if ( match != name_hashes.end() )
             print_match( thread_string.as_string( original_pattern ), match->second );
@@ -668,6 +691,7 @@ struct pattern_bruteforcer_t
                           std::vector<size_t>& indices,
                           std::vector<size_t>& indices2,
                           std::vector<size_t>& dictionary_indices,
+                          std::vector<size_t>& dictionary_indices_mirrored,
                           std::vector<size_t>& counts )
   {
     enum gpu_pattern_buffers : size_t
@@ -812,6 +836,15 @@ struct pattern_bruteforcer_t
       defines += std::to_string( dictionary_indices[ i ] - current_string.offset );
     }
     defines += "\n";
+    defines += std::format( "#define NUM_DICTIONARY_INDICES_MIRRORED {}\n", dictionary_indices_mirrored.size() );
+    defines += std::format( "#define DICTIONARY_INDICES_MIRRORED " );
+    for ( size_t i = 0; i < dictionary_indices_mirrored.size(); i++ )
+    {
+      if ( i != 0 )
+        defines += ",";
+      defines += std::to_string( dictionary_indices_mirrored[ i ] - current_string.offset );
+    }
+    defines += "\n";
     defines += std::format( "#define NUM_DICTIONARY_SELECTORS {}\n", dictionary_indices.size() );
     defines += std::format( "#define DICTIONARY_SELECTORS " );
     for ( size_t i = 0; i < dictionary_indices.size(); i++ )
@@ -926,7 +959,7 @@ struct pattern_bruteforcer_t
           temp_counts[ c ] = batch_counts[ c ];
         if ( next_combination( temp_counts, indices.size(), results[ i ] ) )
         {
-          get_combination( current_string, temp_counts, indices, indices2, dictionary_indices );
+          get_combination( current_string, temp_counts, indices, indices2, dictionary_indices, dictionary_indices_mirrored );
           uint64_t hash = compute_hash( current_string );
           auto match = name_hashes.find( hash );
           if ( match != name_hashes.end() )
@@ -976,9 +1009,9 @@ int main( int argc, char** argv )
     {
       for ( auto c : p )
       {
-        if ( c == '@' )
+        if ( c == '@' || c == '#' )
         {
-          exit_usage( "At least one dictionary must be provided for patterns that contain @" );
+          exit_usage( "At least one dictionary must be provided for patterns that contain @ or #" );
         }
       }
     }

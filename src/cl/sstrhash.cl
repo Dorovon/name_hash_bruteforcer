@@ -1,17 +1,3 @@
-// Necessary Defines
-// NUM_LETTERS: length of the alphabet to use
-// LETTERS: the alphabet to use
-// STR: the initial bytes of the string fragment that will be hashed
-//      each global id will permute this to a different value
-// LEN: length of the string to hash
-// NUM_INDICES: the number of wildcards that need to be permuted over in the string
-// NUM_INDICES2: the number of wildcards that mirror the first set in the string
-// INDICES: the string offset for each wildcard
-// INDICES2: the string offset for each wildcard that mirrors the first set
-// NUM_HASHES: the size of the bucketed array of hashes
-// BUCKET_SIZE: the number of hashes in each bucket
-// MAX_RESULTS: the maximum number of results that are allowed
-
 typedef uchar uint8_t;
 typedef ushort uint16_t;
 typedef uint uint32_t;
@@ -38,6 +24,12 @@ constant uint16_t indices2[ 1 ] = { 0 };
 constant uint16_t dictionary_indices[ NUM_DICTIONARY_INDICES ] = { DICTIONARY_INDICES };
 #else
 constant uint16_t dictionary_indices[ 1 ] = { 0 };
+#endif
+
+#if NUM_DICTIONARY_INDICES_MIRRORED > 0
+constant uint16_t dictionary_indices_mirrored[ NUM_DICTIONARY_INDICES_MIRRORED ] = { DICTIONARY_INDICES_MIRRORED };
+#else
+constant uint16_t dictionary_indices_mirrored[ 1 ] = { 0 };
 #endif
 
 #if NUM_DICTIONARY_SELECTORS > 0
@@ -74,6 +66,7 @@ kernel void bruteforce( global const size_t* initial_counts, global uint* num_re
   const size_t id = get_global_id( 0 );
   size_t count = id;
   uchar indices_str[ NUM_INDICES ];
+  uint32_t word_indices[ NUM_DICTIONARY_INDICES ];
 
   // compute index replacements for current combination
   for ( size_t i = 0; i < NUM_INDICES; i++ )
@@ -83,11 +76,20 @@ kernel void bruteforce( global const size_t* initial_counts, global uint* num_re
     count = count / NUM_LETTERS; // carry for the next index
   }
 
+  for ( size_t i = 0; i < NUM_DICTIONARY_INDICES; i++ )
+  {
+    count += initial_counts[ NUM_INDICES + i ];
+    uint8_t d = dictionary_selectors[ i ];
+    word_indices[ i ] = ( count % dictionary_lengths[ d ] ) + dictionary_offsets[ d ];
+    count = count / dictionary_lengths[ d ];
+  }
+
   // write the string for the current combination
   size_t string_index = 0;
   size_t index_index = 0;
   size_t index2_index = 0;
   size_t dictionary_index = 0;
+  size_t dictionary_index_mirrored = 0;
   size_t write_index = 0;
   uchar new_str[ MAX_LENGTH ];
   while ( string_index < LEN )
@@ -104,15 +106,21 @@ kernel void bruteforce( global const size_t* initial_counts, global uint* num_re
     }
     else if ( dictionary_index < NUM_DICTIONARY_INDICES && string_index == dictionary_indices[ dictionary_index ] )
     {
-      count += initial_counts[ NUM_INDICES + dictionary_index ];
-      uint8_t d = dictionary_selectors[ dictionary_index ];
-      uint32_t w = ( count % dictionary_lengths[ d ] ) + dictionary_offsets[ d ];
+      uint32_t w = word_indices[ dictionary_index ];
       uint32_t o = word_offsets[ w ];
       uint32_t l = word_lengths[ w ];
       for ( uint16_t j = 0; j < l; j++ )
         new_str[ write_index++ ] = dictionary_words[ o + j ];
-      count = count / dictionary_lengths[ d ];
       dictionary_index++;
+    }
+    else if ( dictionary_index_mirrored < NUM_DICTIONARY_INDICES_MIRRORED && string_index == dictionary_indices_mirrored[ dictionary_index_mirrored ] )
+    {
+      uint32_t w = word_indices[ dictionary_index_mirrored ];
+      uint32_t o = word_offsets[ w ];
+      uint32_t l = word_lengths[ w ];
+      for ( uint16_t j = 0; j < l; j++ )
+        new_str[ write_index++ ] = dictionary_words[ o + j ];
+      dictionary_index_mirrored++;
     }
     else
     {

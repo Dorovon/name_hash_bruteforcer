@@ -64,6 +64,7 @@ hash_string_t::hash_string_t( std::string_view str, size_t hash_type, const std:
   if ( !dictionaries.empty() )
   {
     size_t dictionary_index = 0;
+    size_t dictionary_index_mirrored = 0;
     for ( auto c : str )
     {
       if ( c == '@' )
@@ -80,6 +81,20 @@ hash_string_t::hash_string_t( std::string_view str, size_t hash_type, const std:
         }
         dictionary_index++;
       }
+      if ( c == '#' )
+      {
+        if ( dictionary_index_mirrored < dictionaries.size() )
+        {
+          min_size += dictionaries[ dictionary_index_mirrored ].min_length() - 1;
+          max_size += dictionaries[ dictionary_index_mirrored ].max_length() - 1;
+        }
+        else
+        {
+          min_size += dictionaries[ 0 ].min_length() - 1;
+          max_size += dictionaries[ 0 ].max_length() - 1;
+        }
+        dictionary_index_mirrored++;
+      }
       if ( c == '*' || c == '%' )
         num_scratch_bytes++; // extra space to keep track of these replacements
     }
@@ -92,7 +107,7 @@ hash_string_t::hash_string_t( std::string_view str, size_t hash_type, const std:
   _data = std::make_shared<unsigned char[]>( data_size );
   for ( size_t i = 0; i < size; i++ )
   {
-    if ( str[ i ] == '@' && dictionaries.empty() )
+    if ( ( str[ i ] == '@' || str[ i ] == '#' ) && dictionaries.empty() )
     {
       util::error( "No dictionaries for hash_string_t" );
       std::exit( 1 );
@@ -127,7 +142,7 @@ std::string hash_string_t::as_string( std::string_view original_pattern ) const
   for ( size_t i = 0; i < current_size; i++ )
   {
     unsigned char ch;
-    if ( i < original_pattern.size() && original_pattern[ i ] == '@' )
+    if ( i < original_pattern.size() && ( original_pattern[ i ] == '@' || original_pattern[ i ] == '#' ) )
       try_to_match_pattern = false;
     if ( try_to_match_pattern && i < original_pattern.size() && original_pattern[ i ] != '*' && original_pattern[ i ] != '%' )
       ch = original_pattern[ i ];
@@ -150,7 +165,7 @@ void hash_string_t::compute_partial_hash()
 {
   if ( hash_type == H_HASHLITTLE2 )
   {
-    if ( ( *this )[ 0 ] == '*' || ( *this )[ 0 ] == '%' || ( *this )[ 0 ] == '@' )
+    if ( ( *this )[ 0 ] == '*' || ( *this )[ 0 ] == '%' || ( *this )[ 0 ] == '@' || ( *this )[ 0 ] == '#' )
     {
       offset = 0;
       for ( size_t length = min_size; length <= max_size; length++ )
@@ -161,7 +176,7 @@ void hash_string_t::compute_partial_hash()
     size_t i;
     for ( i = 0; i < size - 1; i++ )
     {
-      if ( ( *this )[ i + 1 ] == '*' || ( *this )[ i + 1 ] == '%' || ( *this )[ i + 1 ] == '@' )
+      if ( ( *this )[ i + 1 ] == '*' || ( *this )[ i + 1 ] == '%' || ( *this )[ i + 1 ] == '@' || ( *this )[ i + 1 ] == '#' )
         break;
     }
     offset = i - i % 12;
@@ -173,7 +188,7 @@ void hash_string_t::compute_partial_hash()
     size_t i;
     for ( i = 0; i < size; i++ )
     {
-      if ( ( *this )[ i ] == '*' || ( *this )[ i ] == '%' || ( *this )[ i ] == '@' )
+      if ( ( *this )[ i ] == '*' || ( *this )[ i ] == '%' || ( *this )[ i ] == '@' || ( *this )[ i ] == '#' )
         break;
     }
     offset = i;
