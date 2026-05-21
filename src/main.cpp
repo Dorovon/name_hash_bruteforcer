@@ -250,6 +250,7 @@ void print_help()
                "        numbers: \"0123456789\"\n"
                "        letters: \"ABCDEFGHIJKLMNOPQRSTUVWXYZ\"\n"
                "        hex:     \"0123456789ABCDEF\"\n"
+               "        bytes:   all 256 bytes\n"
                "  -c  limit the number of computational threads used to the given number when using the CPU\n"
                "      this limit does not include background threads used to manage the workload and results\n"
                "  -l  use the given listfile for modes that need one\n"
@@ -263,7 +264,7 @@ void print_help()
                "  -m  set the maximum number of matches for a single GPU batch\n"
                "  -q  suppress unnecessary output\n"
                "  -t  calculate a table hash instead\n"
-               "  -d  use the given file as a dictionary to replace @ characters in the pattern\n"
+               "  -d  use the given file as a dictionary to replace @ or # characters in the pattern\n"
                "      using this multiple times allows prividing a different files for each wildcard\n"
                "  -?  display this message and exit\n" );
   std::exit( 0 );
