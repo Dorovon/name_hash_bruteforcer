@@ -77,7 +77,7 @@ struct gpu_t
   }
 
   template<typename T>
-  void add_constant_arg( cl_uint arg_index, const void* data, size_t size, cl_mem_flags flags = CL_MEM_READ_WRITE )
+  void add_constant_arg( cl_uint arg_index, const void* data, size_t size, cl_mem_flags flags = CL_MEM_READ_ONLY )
   {
     cl_mem buffer = add_buffer( size * sizeof( T ), flags );
     write_buffer( buffer, data, size * sizeof( T ) );

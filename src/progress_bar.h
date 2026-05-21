@@ -70,6 +70,11 @@ struct progress_bar_t
     finished_threads = 0;
   }
 
+  void reset_clock()
+  {
+    begin = std::chrono::steady_clock::now();
+  }
+
   void finish()
   {
     std::lock_guard<std::mutex> guard( mutex );
