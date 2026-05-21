@@ -419,11 +419,21 @@ std::unordered_map<uint64_t, uint32_t> read_name_hashes( const std::string& hash
 {
   std::unordered_map<uint64_t, uint32_t> name_hashes;
 
-  try
+  bool is_hex = std::all_of( hash_str.begin(), hash_str.end(), []( char c ) {
+    return ( c >= '0' && c <= '9' ) || ( c >= 'a' && c <= 'f' ) || ( c >= 'A' && c <= 'F' );
+  });
+
+  if ( is_hex )
   {
+    if ( hash_str.size() > 16 )
+    {
+      util::error( "name hashes cannot exceed 16 characters" );
+      std::exit( 1 );
+    }
+
     name_hashes[ std::stoull( hash_str, nullptr, 16 ) ] = 0;
   }
-  catch ( std::exception& )
+  else
   {
     std::string name_hash_data = util::read_text_file( hash_str );
     util::read_lines( name_hash_data, [ & ]( std::string_view line )
@@ -431,6 +441,11 @@ std::unordered_map<uint64_t, uint32_t> read_name_hashes( const std::string& hash
       auto splits = util::string_split( line, ";" );
       if ( splits.size() >= 2 )
       {
+        if ( splits[ 1 ].size() > 16 )
+        {
+          util::error( "name hashes cannot exceed 16 characters" );
+          std::exit( 1 );
+        }
         uint64_t name_hash = std::stoull( std::string( splits[ 1 ] ), nullptr, 16 );
         uint32_t file_data_id = std::stoul( std::string( splits[ 0 ] ) );
         auto it = listfile.find( file_data_id );
@@ -465,15 +480,6 @@ void generate_patterns_from_listfile( const std::unordered_map<uint32_t, std::st
   size_t num_base = 0;
   for ( auto& [ file_data_id, name ] : listfile )
   {
-    // check if prepending the hash with some specific directories finds anything
-    // for ( auto prefix : { "Data/", "Alternate/", "Test/" } )
-    // {
-    //   hash_string_t data_name{ prefix + std::string( name ), HASH_TYPE };
-    //   auto match = name_hashes.find( compute_hash( data_name ) );
-    //   if ( match != name_hashes.end() )
-    //     print_match( data_name.as_string( prefix + std::string( name ) ), match->second );
-    // }
-
     for ( size_t i = name.size() - 1; i > 0; i-- )
     {
       if ( name[ i ] == '/' )
@@ -994,32 +1000,40 @@ void match_patterns( const std::unordered_map<uint64_t, uint32_t>& name_hashes )
 
 int main( int argc, char** argv )
 {
-  NUM_THREADS = std::thread::hardware_concurrency();
-  read_args( argc, argv );
-  std::unordered_map<uint32_t, std::string_view> listfile = read_listfile( LISTFILE_PATH );
-  read_pattern_file();
-  std::unordered_map<uint64_t, uint32_t> name_hashes = read_name_hashes( NAME_HASH_STR, listfile );
-  for ( const auto& p : DICTIONARY_FILES )
-    DICTIONARIES.emplace_back( p );
-
-  if ( PATTERNS.empty() )
-    generate_patterns_from_listfile( listfile );
-
-  if ( !PATTERNS.empty() && DICTIONARIES.empty() )
+  try
   {
-    for ( const auto& p : PATTERNS )
+    NUM_THREADS = std::thread::hardware_concurrency();
+    read_args( argc, argv );
+    std::unordered_map<uint32_t, std::string_view> listfile = read_listfile( LISTFILE_PATH );
+    read_pattern_file();
+    std::unordered_map<uint64_t, uint32_t> name_hashes = read_name_hashes( NAME_HASH_STR, listfile );
+    for ( const auto& p : DICTIONARY_FILES )
+      DICTIONARIES.emplace_back( p );
+
+    if ( PATTERNS.empty() )
+      generate_patterns_from_listfile( listfile );
+
+    if ( !PATTERNS.empty() && DICTIONARIES.empty() )
     {
-      for ( auto c : p )
+      for ( const auto& p : PATTERNS )
       {
-        if ( c == '@' || c == '#' )
+        for ( auto c : p )
         {
-          exit_usage( "At least one dictionary must be provided for patterns that contain @ or #" );
+          if ( c == '@' || c == '#' )
+          {
+            exit_usage( "At least one dictionary must be provided for patterns that contain @ or #" );
+          }
         }
       }
     }
-  }
 
-  match_patterns( name_hashes );
+    match_patterns( name_hashes );
+  }
+  catch ( std::exception& e )
+  {
+    util::error( e.what() );
+    std::exit( 1 );
+  }
 
   return 0;
 }
