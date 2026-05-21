@@ -29,7 +29,7 @@ Interface/Cinematics/Logo_1024.avi
 ```
 
 ### Using mirrored wildcards for patterns where a section of text is expected to repeat
-When `*` and `%` are used in the same pattern, the first N instances of will match. In this example, the value of `****` is always equal to the value of `%%%%`. If the number of `*`s is not equal to the number of `%`s, then only the leftmost sequences of equal length will match.
+When `*` and `%` are used in the same pattern, all instances of whichever wildcard appears fewer times will match the sequence given by the other wildcard. In this example, the value of `****` is always equal to the value of `%%%%`. If the number of `*`s is not equal to the number of `%`s, then only the leftmost sequences of equal length will match.
 ```
 >bruteforcer -n d3a6007a88ee14fc -p world/maps/****/%%%%.wdt
 world/maps/2875/2875.wdt
@@ -53,6 +53,32 @@ By default, the alphabet used is 39 characters long `ABCDEFGHIJKLMNOPQRSTUVWXYZ0
 6798793;world/maps/2868/2868_43_26.adt
 6798801;world/maps/2868/2868_43_27.adt
 [100.00%] 00:00:00.833 elapsed, 120.05 Mh/s
+```
+
+### Using a dictionary
+Dictionaries can be provided using the `-d` option and words from them will replace instances of `@` or `#` characters in the pattern. If `@` and `#` are used, the one that appears fewer times will result in a mirrored replacement as described for wildcards above. If multiple dictionaries are provided with multiple instances of the `-d` option, then the Nth wildcard will be replaced with words from the Nth dictionary, or the first dictionary if there are fewer than N dictionaries provided.
+
+**test/dictionary.txt**
+```
+Logo
+1024
+asdf
+testing
+123
+MagmaSphere
+Rock
+Drip
+```
+```
+>bruteforcer -n 8aaf1e907b81e722 -d test/dictionary.txt -p Interface/Cinematics/@_@.avi
+Interface/Cinematics/logo_1024.avi
+[100.00%] 00:00:00.102 elapsed, 627.45 h/s
+```
+```
+>bruteforcer -n test/lookup1.csv -d test/dictionary.txt -p CREATURE/@/#_@.blp
+5917328;CREATURE/magmasphere/magmasphere_drip.blp
+5917326;CREATURE/magmasphere/magmasphere_rock.blp
+[100.00%] 00:00:00.006 elapsed, 10.67 Kh/s
 ```
 
 ### Checking multiple patterns from a file
@@ -99,9 +125,9 @@ Interface/Cinematics/Logo_1024.avi
 ```
 
 ### Use an existing listfile and automatic strategies to try to match new names
-This is intended for use with the [community listfile](https://github.com/wowdev/wow-listfile). It does not currently have GPU support and will take a long time to run compared to the other examples on this page. Currently, this simply checks many combinations of existing directories and filenames contained in the listfile in an attempt to find existing files that were copied to somewhere else without changing the filename. Because a listfile was provided, this will exclude any hashes from the file given with `-n` that are already known.
+This is intended for use with the [community listfile](https://github.com/wowdev/wow-listfile). Currently, this simply checks many combinations of existing directories and filenames contained in the listfile in an attempt to find existing files that were copied to somewhere else without changing the filename. Because a listfile was provided, this will exclude any hashes from the file given with `-n` that are already known.
 
-You can also use these options along with any of the pattern options above to check against unknown or incorrect name hashes from the community listfile instead of providing your own list. Note that these files are relatively large, so doing things this way will be less responsive than using your own already filtered list of name hashes.
+You can also use these options along with any of the pattern options above to dynamically prepare a list of unknown or incorrect name hashes from the community listfile instead of providing your own list. Note that these files are relatively large, so doing it this way will be less responsive than using your own already filtered list of name hashes.
 ```
 >./bruteforcer -n ../wow-listfile/meta/lookup.csv -l ../listfile-withcapitals.csv
 3169803;shaders/raytracing/dx_6_0/TestShader1_Internal.bls
