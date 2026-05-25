@@ -790,39 +790,35 @@ struct pattern_bruteforcer_t
       defines += std::to_string( indices2[ i ] - current_string.offset );
     }
     defines += "\n";
+    defines += std::format( "#define MIN_LENGTH {}\n", current_string.min_size - current_string.offset );
     defines += std::format( "#define MAX_LENGTH {}\n", current_string.max_size - current_string.offset );
     if ( HASH_TYPE == H_HASHLITTLE2 )
     {
+      size_t data_length = current_string.max_size - current_string.offset;
+      if ( data_length % 12 != 0)
+        data_length += 12 - data_length % 12;
+      defines += std::format( "#define DATA_LENGTH {}\n", data_length );
       std::string str_a;
       std::string str_b;
       std::string str_c;
-      str_a += "#define A {";
-      str_b += "#define B {";
-      str_c += "#define C {";
-      for ( size_t i = current_string.offset; i <= current_string.max_size; i++ )
+      str_a += "#define A ";
+      str_b += "#define B ";
+      str_c += "#define C ";
+      for ( size_t i = 0; i <= current_string.max_size - current_string.min_size; i++ )
       {
-        if ( i != current_string.offset )
+        if ( i != 0 )
         {
           str_a += ",";
           str_b += ",";
           str_c += ",";
         }
-        if ( i >= current_string.min_size )
-        {
-          str_a += std::to_string( current_string.hash_states[ i - current_string.min_size ].a );
-          str_b += std::to_string( current_string.hash_states[ i - current_string.min_size ].b );
-          str_c += std::to_string( current_string.hash_states[ i - current_string.min_size ].c );
-        }
-        else
-        {
-          str_a += "0";
-          str_b += "0";
-          str_c += "0";
-        }
+        str_a += std::to_string( current_string.hash_states[ i ].a );
+        str_b += std::to_string( current_string.hash_states[ i ].b );
+        str_c += std::to_string( current_string.hash_states[ i ].c );
       }
-      str_a += "}\n";
-      str_b += "}\n";
-      str_c += "}\n";
+      str_a += "\n";
+      str_b += "\n";
+      str_c += "\n";
       defines += str_a + str_b + str_c;
     }
     else if ( HASH_TYPE == H_SSTRHASH )
@@ -835,63 +831,71 @@ struct pattern_bruteforcer_t
     defines += std::format( "#define BUCKET_SIZE {}\n", bucket_size );
     defines += std::format( "#define MAX_RESULTS {}\n", GPU_BATCH_MAX_RESULTS );
 
-    defines += std::format( "#define NUM_DICTIONARY_INDICES {}\n", dictionary_indices.size() );
-    defines += std::format( "#define DICTIONARY_INDICES " );
-    for ( size_t i = 0; i < dictionary_indices.size(); i++ )
+    if ( !dictionary_indices.empty() )
     {
-      if ( i != 0 )
-        defines += ",";
-      defines += std::to_string( dictionary_indices[ i ] - current_string.offset );
+      defines += std::format( "#define NUM_DICTIONARY_INDICES {}\n", dictionary_indices.size() );
+      defines += std::format( "#define DICTIONARY_INDICES " );
+      for ( size_t i = 0; i < dictionary_indices.size(); i++ )
+      {
+        if ( i != 0 )
+          defines += ",";
+        defines += std::to_string( dictionary_indices[ i ] - current_string.offset );
+      }
+      defines += "\n";
+      defines += std::format( "#define NUM_DICTIONARY_INDICES_MIRRORED {}\n", dictionary_indices_mirrored.size() );
+      defines += std::format( "#define DICTIONARY_INDICES_MIRRORED " );
+      for ( size_t i = 0; i < dictionary_indices_mirrored.size(); i++ )
+      {
+        if ( i != 0 )
+          defines += ",";
+        defines += std::to_string( dictionary_indices_mirrored[ i ] - current_string.offset );
+      }
+      defines += "\n";
+      defines += std::format( "#define NUM_DICTIONARY_SELECTORS {}\n", dictionary_indices.size() );
+      defines += std::format( "#define DICTIONARY_SELECTORS " );
+      for ( size_t i = 0; i < dictionary_indices.size(); i++ )
+      {
+        if ( i != 0 )
+          defines += ",";
+        if ( i < DICTIONARIES.size() )
+          defines += std::to_string( i );
+        else
+          defines += "0";
+      }
+      defines += "\n";
+      defines += std::format( "#define NUM_DICTIONARIES {}\n", DICTIONARIES.size() );
+      defines += std::format( "#define DICTIONARY_LENGTHS " );
+      for ( size_t i = 0; i < DICTIONARIES.size(); i++ )
+      {
+        if ( i != 0 )
+          defines += ",";
+        defines += std::to_string( DICTIONARIES[ i ].size() );
+      }
+      defines += "\n";
+      defines += std::format( "#define DICTIONARY_OFFSETS " );
+      size_t current_offset = 0;
+      for ( size_t i = 0; i < DICTIONARIES.size(); i++ )
+      {
+        if ( i != 0 )
+          defines += ",";
+        defines += std::to_string( current_offset );
+        current_offset += DICTIONARIES[ i ].size();
+      }
+      defines += "\n";
     }
-    defines += "\n";
-    defines += std::format( "#define NUM_DICTIONARY_INDICES_MIRRORED {}\n", dictionary_indices_mirrored.size() );
-    defines += std::format( "#define DICTIONARY_INDICES_MIRRORED " );
-    for ( size_t i = 0; i < dictionary_indices_mirrored.size(); i++ )
-    {
-      if ( i != 0 )
-        defines += ",";
-      defines += std::to_string( dictionary_indices_mirrored[ i ] - current_string.offset );
-    }
-    defines += "\n";
-    defines += std::format( "#define NUM_DICTIONARY_SELECTORS {}\n", dictionary_indices.size() );
-    defines += std::format( "#define DICTIONARY_SELECTORS " );
-    for ( size_t i = 0; i < dictionary_indices.size(); i++ )
-    {
-      if ( i != 0 )
-        defines += ",";
-      if ( i < DICTIONARIES.size() )
-        defines += std::to_string( i );
-      else
-        defines += "0";
-    }
-    defines += "\n";
-    defines += std::format( "#define NUM_DICTIONARIES {}\n", DICTIONARIES.size() );
-    defines += std::format( "#define DICTIONARY_LENGTHS " );
-    for ( size_t i = 0; i < DICTIONARIES.size(); i++ )
-    {
-      if ( i != 0 )
-        defines += ",";
-      defines += std::to_string( DICTIONARIES[ i ].size() );
-    }
-    defines += "\n";
-    defines += std::format( "#define DICTIONARY_OFFSETS " );
-    size_t current_offset = 0;
-    for ( size_t i = 0; i < DICTIONARIES.size(); i++ )
-    {
-      if ( i != 0 )
-        defines += ",";
-      defines += std::to_string( current_offset );
-      current_offset += DICTIONARIES[ i ].size();
-    }
-    defines += "\n";
 
     std::vector<const char*> source;
     source.push_back( defines.c_str() );
     switch ( HASH_TYPE )
     {
       case H_HASHLITTLE2:
-        source.push_back( kernels::hashlittle2 );
+      {
+        if ( dictionary_indices.empty() )
+          source.push_back( kernels::hashlittle2_nodict );
+        else
+          source.push_back( kernels::hashlittle2 );
         break;
+      }
       case H_SSTRHASH:
         source.push_back( kernels::sstrhash );
         break;
@@ -917,9 +921,12 @@ struct pattern_bruteforcer_t
     gpu_pool->set_fn_init_shared_buffers( [ & ]( gpu_t& gpu )
     {
       gpu.add_constant_arg<uint64_t>( B_HASHES, bucket_hashes.data(), bucket_hashes.size() ); // global const uint64_t* hashes
-      gpu.add_constant_arg<unsigned char>( B_DICTIONARY_WORDS, dictionary_words.data(), dictionary_words.size() ); // global const uchar* dictionary_words
-      gpu.add_constant_arg<uint32_t>( B_WORD_OFFSETS, word_offsets.data(), word_offsets.size() ); // global const uint32_t* word_offsets
-      gpu.add_constant_arg<uint16_t>( B_WORD_LENGTHS, word_lengths.data(), word_lengths.size() ); // global const uint16_t* word_lengths
+      if ( !dictionary_indices.empty() )
+      {
+        gpu.add_constant_arg<unsigned char>( B_DICTIONARY_WORDS, dictionary_words.data(), dictionary_words.size() ); // global const uchar* dictionary_words
+        gpu.add_constant_arg<uint32_t>( B_WORD_OFFSETS, word_offsets.data(), word_offsets.size() ); // global const uint32_t* word_offsets
+        gpu.add_constant_arg<uint16_t>( B_WORD_LENGTHS, word_lengths.data(), word_lengths.size() ); // global const uint16_t* word_lengths
+      }
     });
 
     // read/write buffers used by each batch
