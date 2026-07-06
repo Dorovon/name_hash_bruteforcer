@@ -752,7 +752,7 @@ struct pattern_bruteforcer_t
       }
     }
 
-    // Prepare the source code for the kernel.
+    // Prepare the source code for the kernel
     std::string defines;
     defines += std::format( "#define NUM_LETTERS {}\n", LETTERS_SIZE );
     defines += "#define LETTERS {";
@@ -798,6 +798,19 @@ struct pattern_bruteforcer_t
       if ( data_length % 12 != 0)
         data_length += 12 - data_length % 12;
       defines += std::format( "#define DATA_LENGTH {}\n", data_length );
+      defines += std::format( "#define LENGTH {}\n", data_length - 12 );
+      if ( dictionary_indices.empty() )
+      {
+
+        defines += std::format( "#define STRPAD ");
+        for ( size_t i = current_string.max_size; i < data_length; i++ )
+        {
+          if ( i != current_string.max_size )
+            defines += ",";
+          defines += "0";
+        }
+        defines += "\n";
+      }
       std::string str_a;
       std::string str_b;
       std::string str_c;

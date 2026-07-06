@@ -4,8 +4,6 @@ typedef ulong uint64_t;
 
 constant uchar letters[ NUM_LETTERS ] = LETTERS;
 
-#define LENGTH DATA_LENGTH - 12
-
 #if NUM_INDICES
 constant uint16_t indices[ NUM_INDICES ] = { INDICES };
 #endif
@@ -14,7 +12,7 @@ constant uint16_t indices[ NUM_INDICES ] = { INDICES };
 constant uint16_t indices2[ NUM_INDICES2 ] = { INDICES2 };
 #endif
 
-inline uint32_t rotate_left( uint32_t value, size_t distance )
+inline uint32_t rotate_left( uint32_t value, uint32_t distance )
 {
   return ( value << distance ) | ( value >> ( 32 - distance ) );
 }
@@ -55,11 +53,10 @@ inline uint64_t hashlittle2( unsigned char* k )
 
 kernel void bruteforce( global const size_t* initial_counts, global uint* num_results, global size_t* result_id, global const uint64_t* hashes )
 {
-  size_t id = get_global_id( 0 );
+  size_t count = get_global_id( 0 );
 
   // initialize the string
-  unsigned char str[ DATA_LENGTH ] = { STR };
-  size_t count = id;
+  unsigned char str[ DATA_LENGTH ] = { STR,STRPAD };
   unsigned char letter;
   for ( size_t i = 0; i < NUM_INDICES; i++ )
   {
@@ -75,9 +72,9 @@ kernel void bruteforce( global const size_t* initial_counts, global uint* num_re
 
   // hash the string and check for matches
   uint64_t hash = hashlittle2( str );
-  size_t bucket_index = ( hash & BUCKET_MASK ) * BUCKET_SIZE;
+  uint32_t bucket_index = ( hash & BUCKET_MASK ) * BUCKET_SIZE;
   bool match = false;
-  for ( size_t i = 0; i < BUCKET_SIZE; i++ )
+  for ( uint32_t i = 0; i < BUCKET_SIZE; i++ )
     match |= ( hash == hashes[ bucket_index + i ] );
 
   // write the result if a match occurred
@@ -85,6 +82,6 @@ kernel void bruteforce( global const size_t* initial_counts, global uint* num_re
   {
     uint result_index = atomic_inc( num_results );
     if ( result_index < MAX_RESULTS )
-      result_id[ result_index ] = id;
+      result_id[ result_index ] = get_global_id( 0 );
   }
 }
