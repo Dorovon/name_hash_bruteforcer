@@ -42,7 +42,7 @@ jobs:
       uses: lukka/get-cmake@82813008e734bbee947d1fbde72035b0aa989da9
     - name: Configure CMake (Windows)
       if: runner.os == 'Windows'
-      run: cmake -S . -B . -DCMAKE_TOOLCHAIN_FILE="vcpkg/scripts/buildsystems/vcpkg.cmake"
+      run: cmake -S . -B . -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="vcpkg/scripts/buildsystems/vcpkg.cmake"
     - name: Configure CMake (Linux)
       if: runner.os == 'Linux'
       run: cmake -S . -B .
